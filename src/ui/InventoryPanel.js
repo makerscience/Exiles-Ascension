@@ -13,6 +13,7 @@ import {
 import Store from '../systems/Store.js';
 import InventorySystem from '../systems/InventorySystem.js';
 import { parseStackKey } from '../systems/InventorySystem.js';
+import EnhancementManager from '../systems/EnhancementManager.js';
 import { makeButton } from './ui-utils.js';
 
 const PANEL_W = 880;
@@ -71,7 +72,7 @@ export default class InventoryPanel extends ModalPanel {
   _getEvents() {
     return [
       EVENTS.INV_ITEM_ADDED, EVENTS.INV_ITEM_EQUIPPED,
-      EVENTS.INV_ITEM_SOLD, EVENTS.INV_FULL, EVENTS.SAVE_LOADED,
+      EVENTS.INV_ITEM_SOLD, EVENTS.INV_FULL, EVENTS.ENHANCE_PURCHASED, EVENTS.SAVE_LOADED,
     ];
   }
 
@@ -121,6 +122,7 @@ export default class InventoryPanel extends ModalPanel {
 
   _open() {
     this._selectedItemId = null;
+    this._selectedEquippedSlotId = null;
     super._open();
   }
 
@@ -130,6 +132,7 @@ export default class InventoryPanel extends ModalPanel {
     this._dragData = null;
     this._pendingClick = null;
     this._selectedItemId = null;
+    this._selectedEquippedSlotId = null;
     super._close();
   }
 
@@ -161,6 +164,9 @@ export default class InventoryPanel extends ModalPanel {
         const selSlotId = getEquipSlotForItem(selItem.slot);
         if (selSlotId) this._highlightEquipSlot(selSlotId);
       }
+    }
+    if (this._selectedEquippedSlotId) {
+      this._highlightEquipSlot(this._selectedEquippedSlotId);
     }
   }
 
@@ -287,6 +293,15 @@ export default class InventoryPanel extends ModalPanel {
     this._dynamicObjects.push(label);
 
     if (item) {
+      const enhancementLevel = EnhancementManager.getLevel(slotDef.id);
+      if (enhancementLevel > 0) {
+        const badge = this.scene.add.text(
+          x + EQ_W - 4, y + 2, `+${enhancementLevel}`,
+          { fontFamily: 'monospace', fontSize: '10px', color: '#facc15', fontStyle: 'bold' }
+        ).setOrigin(1, 0);
+        this._dynamicObjects.push(badge);
+      }
+
       if (item.thumbnail && this.scene.textures.exists(item.thumbnail)) {
         const thumb = this.scene.add.image(
           x + EQ_W / 2, y + EQ_H / 2, item.thumbnail
@@ -307,7 +322,18 @@ export default class InventoryPanel extends ModalPanel {
         this._dynamicObjects.push(nameText);
       }
 
-      bg.on('pointerdown', () => InventorySystem.unequipItem(slotDef.id));
+      bg.on('pointerdown', (pointer) => {
+        const quickUnequip = pointer.rightButtonDown() || pointer.event.shiftKey;
+        if (quickUnequip) {
+          pointer.event.preventDefault();
+          InventorySystem.unequipItem(slotDef.id);
+          if (this._selectedEquippedSlotId === slotDef.id) this._selectedEquippedSlotId = null;
+          return;
+        }
+        this._selectedItemId = null;
+        this._selectedEquippedSlotId = slotDef.id;
+        this._refresh();
+      });
       bg.on('pointerover', () => {
         bg.setStrokeStyle(3, 0xffffff);
         this._showTooltip(stackKey, rarity, slotDef, true);
@@ -494,8 +520,10 @@ export default class InventoryPanel extends ModalPanel {
       if (pending.action === 'equip') {
         InventorySystem.equipItem(pending.stackKey);
         this._selectedItemId = null;
+        this._selectedEquippedSlotId = null;
       } else {
         this._selectedItemId = pending.stackKey;
+        this._selectedEquippedSlotId = null;
         this._refresh();
       }
     });
@@ -558,6 +586,7 @@ export default class InventoryPanel extends ModalPanel {
       if (this._sellZone && this._sellZone.getBounds().contains(pointer.x, pointer.y)) {
         InventorySystem.sellItem(data.stackKey, data.count);
         if (this._selectedItemId === data.stackKey) this._selectedItemId = null;
+        this._selectedEquippedSlotId = null;
         if (data.equipSlotId) this._unhighlightEquipSlot(data.equipSlotId);
         this._sellZone.setStrokeStyle(1, 0x8b5e1a);
         this._sellZone.setFillStyle(0x3a3a4e);
@@ -571,6 +600,7 @@ export default class InventoryPanel extends ModalPanel {
         if (entry && entry.bg.getBounds().contains(pointer.x, pointer.y)) {
           InventorySystem.equipItem(data.stackKey);
           this._selectedItemId = null;
+          this._selectedEquippedSlotId = null;
         }
         this._unhighlightEquipSlot(data.equipSlotId);
       }
@@ -600,9 +630,96 @@ export default class InventoryPanel extends ModalPanel {
   // --- Item Detail Panel (below grid) ---
 
   _renderItemDetail() {
+    const state = Store.getState();
+    const panelLeft = this._cx - PANEL_W / 2;
+    const detailX = panelLeft + 360;
+    const detailY = this._cy + PANEL_H / 2 - 80;
+
+    const renderStatLabel = (scaled) => {
+      if (scaled.statBonuses.atk > 0) return `+${scaled.statBonuses.atk} ATK`;
+      if (scaled.statBonuses.def > 0) return `+${scaled.statBonuses.def} DEF`;
+      if (scaled.statBonuses.agi > 0) return `+${scaled.statBonuses.agi} AGI`;
+      if (scaled.statBonuses.hp > 0) return `+${scaled.statBonuses.hp} HP`;
+      return `+${scaled.statBonuses.regen} REGEN`;
+    };
+
+    if (this._selectedEquippedSlotId) {
+      const slotId = this._selectedEquippedSlotId;
+      const stackKey = state.equipped[slotId];
+      if (!stackKey) {
+        this._selectedEquippedSlotId = null;
+        return;
+      }
+
+      const rarity = parseStackKey(stackKey).rarity || 'common';
+      const scaled = getScaledItem(stackKey, rarity);
+      if (!scaled) return;
+
+      const rarityColor = COLORS.rarity[rarity] || '#a1a1aa';
+      const statStr = renderStatLabel(scaled);
+      const headerText = this.scene.add.text(
+        detailX, detailY,
+        `${scaled.name}  ${rarity} ${scaled.slot}  ${statStr}`,
+        { fontFamily: 'monospace', fontSize: '13px', color: rarityColor }
+      );
+      this._dynamicObjects.push(headerText);
+
+      const descText = this.scene.add.text(
+        detailX, detailY + 16, `"${scaled.description}"`,
+        {
+          fontFamily: 'monospace', fontSize: '12px', color: '#888888',
+          fontStyle: 'italic', wordWrap: { width: PANEL_W - 400 },
+        }
+      );
+      this._dynamicObjects.push(descText);
+
+      const level = EnhancementManager.getLevel(slotId);
+      const maxLevel = EnhancementManager.getMaxLevel();
+      const bonusPct = Math.round((EnhancementManager.getBonusMultiplier(slotId) - 1) * 100);
+      const enhanceInfo = this.scene.add.text(
+        detailX, detailY + 34, `Enhancement: +${level} (${bonusPct}% stats)`,
+        { fontFamily: 'monospace', fontSize: '11px', color: '#facc15' }
+      );
+      this._dynamicObjects.push(enhanceInfo);
+
+      const nextCost = EnhancementManager.getCost(slotId);
+      const canEnhance = EnhancementManager.canEnhance(slotId);
+      const atMax = level >= maxLevel;
+      let statusText = atMax ? 'MAX LEVEL' : `Next: ${nextCost}g`;
+      if (!atMax && !state.gold.gte(nextCost)) statusText = `Need: ${nextCost}g`;
+      const enhanceStatus = this.scene.add.text(
+        detailX, detailY + 48, statusText,
+        { fontFamily: 'monospace', fontSize: '10px', color: atMax ? '#666666' : (canEnhance ? '#d1d5db' : '#f87171') }
+      );
+      this._dynamicObjects.push(enhanceStatus);
+
+      let btnX = detailX;
+      const btnY = detailY + 66;
+      const enhanceBtn = makeButton(this.scene, btnX, btnY, '[ENHANCE]', {
+        color: canEnhance ? '#facc15' : '#666666',
+        bg: canEnhance ? '#333333' : '#222222',
+        onDown: () => {
+          if (!EnhancementManager.enhance(slotId)) return;
+          this._refresh();
+        },
+      });
+      this._dynamicObjects.push(enhanceBtn);
+      btnX += enhanceBtn.width + 8;
+
+      const unequipBtn = makeButton(this.scene, btnX, btnY, 'Unequip', {
+        color: '#22c55e',
+        onDown: () => {
+          InventorySystem.unequipItem(slotId);
+          this._selectedEquippedSlotId = null;
+          this._refresh();
+        },
+      });
+      this._dynamicObjects.push(unequipBtn);
+      return;
+    }
+
     if (!this._selectedItemId) return;
 
-    const state = Store.getState();
     const stack = state.inventoryStacks[this._selectedItemId];
     if (!stack) {
       this._selectedItemId = null;
@@ -613,20 +730,8 @@ export default class InventoryPanel extends ModalPanel {
     const scaled = getScaledItem(this._selectedItemId, rarity);
     if (!scaled) return;
 
-    const panelLeft = this._cx - PANEL_W / 2;
-    const detailX = panelLeft + 360;
-    const detailY = this._cy + PANEL_H / 2 - 80;
-
     const rarityColor = COLORS.rarity[rarity] || '#a1a1aa';
-    const statStr = scaled.statBonuses.atk > 0
-      ? `+${scaled.statBonuses.atk} ATK`
-      : scaled.statBonuses.def > 0
-        ? `+${scaled.statBonuses.def} DEF`
-        : scaled.statBonuses.agi > 0
-          ? `+${scaled.statBonuses.agi} AGI`
-          : scaled.statBonuses.hp > 0
-            ? `+${scaled.statBonuses.hp} HP`
-            : `+${scaled.statBonuses.regen} REGEN`;
+    const statStr = renderStatLabel(scaled);
 
     const headerText = this.scene.add.text(
       detailX, detailY,
@@ -654,6 +759,7 @@ export default class InventoryPanel extends ModalPanel {
         InventorySystem.sellItem(this._selectedItemId, 1);
         const s = Store.getState().inventoryStacks[this._selectedItemId];
         if (!s) this._selectedItemId = null;
+        this._selectedEquippedSlotId = null;
       },
     });
     this._dynamicObjects.push(sell1);
@@ -667,6 +773,7 @@ export default class InventoryPanel extends ModalPanel {
         onDown: () => {
           InventorySystem.sellItem(this._selectedItemId, stack.count);
           this._selectedItemId = null;
+          this._selectedEquippedSlotId = null;
         },
       });
       this._dynamicObjects.push(sellAll);
@@ -678,6 +785,7 @@ export default class InventoryPanel extends ModalPanel {
       onDown: () => {
         InventorySystem.equipItem(this._selectedItemId);
         this._selectedItemId = null;
+        this._selectedEquippedSlotId = null;
       },
     });
     this._dynamicObjects.push(equipBtn);

@@ -216,6 +216,7 @@ const CombatEngine = {
       armor,
       corruption: enemyData.corruption ?? 0,
       summon: opts.isAdd ? null : summon,
+      splitOnDeath: enemyData.splitOnDeath ?? null,
       _armorBroken: false,
       _armorBreakTimerId: null,
       _enraged: false,
@@ -250,6 +251,7 @@ const CombatEngine = {
       attackSpeedMult: template?.attackSpeedMult ?? 1.0,
       rewardMult: template?.rewardMult ?? 1.0,
       lootBonus: template?.lootBonus ?? { dropChanceMult: 1.0, rarityBoost: 0 },
+      pendingSplits: 0,
       attackLockCount: 0,
       corruptionStacks: 0,
     };
@@ -1164,32 +1166,58 @@ const CombatEngine = {
       lootBonus: member.isAdd ? { dropChanceMult: 0, rarityBoost: 0 } : encounter.lootBonus,
     });
 
-    // 4. Boss killed → immediate encounter end
+    // 4. Split on death — spawn child enemies after a 1s pause (treated as adds, no rewards)
+    if (member.splitOnDeath && !member.isAdd) {
+      const splitKey = `enc:${encounter.id}:split:${member.instanceId}`;
+      const parentId = member.instanceId;
+      const { enemyId, count } = member.splitOnDeath;
+      encounter.pendingSplits += 1;
+      encounter.activeTimerIds.add(splitKey);
+      TimeEngine.scheduleOnce(splitKey, () => {
+        if (!encounter) return;
+        encounter.activeTimerIds.delete(splitKey);
+        encounter.pendingSplits -= 1;
+        for (let i = 0; i < count; i++) {
+          if (CombatEngine._getFreeEncounterSlot() == null) break;
+          const scaledChild = CombatEngine._buildScaledEnemyForCurrentZone(enemyId);
+          if (!scaledChild) break;
+          CombatEngine._addEncounterMember(scaledChild, {
+            isAdd: true,
+            summonerId: parentId,
+          });
+        }
+      }, 1000);
+    }
+
+    // 5. Boss killed → immediate encounter end
     if (member.instanceId === encounter.bossMemberId) {
       CombatEngine._onEncounterEnd('boss_killed');
       return;
     }
 
-    // 5. Retarget if dead member was current target
+    // 6. Retarget if dead member was current target
+    const hasPendingSplits = encounter.pendingSplits > 0;
     if (encounter.targetId === instanceId) {
       const living = CombatEngine.getLivingMembers();
-      if (living.length === 0) {
+      if (living.length === 0 && !hasPendingSplits) {
         CombatEngine._onEncounterEnd('cleared');
         return;
       }
-      // Lowest-slot living member becomes new target
-      living.sort((a, b) => a.slot - b.slot);
-      const next = living[0];
-      encounter.targetId = next.instanceId;
-      emit(EVENTS.COMBAT_TARGET_CHANGED, {
-        encounterId: encounter.id,
-        instanceId: next.instanceId,
-        slot: next.slot,
-        enemyId: next.enemyId,
-      });
+      if (living.length > 0) {
+        // Lowest-slot living member becomes new target
+        living.sort((a, b) => a.slot - b.slot);
+        const next = living[0];
+        encounter.targetId = next.instanceId;
+        emit(EVENTS.COMBAT_TARGET_CHANGED, {
+          encounterId: encounter.id,
+          instanceId: next.instanceId,
+          slot: next.slot,
+          enemyId: next.enemyId,
+        });
+      }
     } else {
       // Non-target died — check if encounter is fully cleared
-      if (CombatEngine.getLivingMembers().length === 0) {
+      if (CombatEngine.getLivingMembers().length === 0 && !hasPendingSplits) {
         CombatEngine._onEncounterEnd('cleared');
       }
     }

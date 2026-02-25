@@ -1,5 +1,25 @@
 # CHANGELOG
 
+## 2026-02-25 - Beetle/Boar Progression Swap for Early Armor Teaching
+- **Enemy placement swap:** moved `a2_giant_beetle` into Area 1 with zone range `6-10` (no earlier spawn), and moved `a1_thornback_boar` into Area 2 with zone range `14-15`
+- **Early armor onboarding:** Area 1 beetle is now tuned as an armor-focused intro enemy (`armor.reduction: 0.22`) to coincide with early Power-stance usage timing
+- **Area-appropriate stat retune:** beetle stats reduced to early-game values (`hp 180`, `attack 15`, `def 10`, `gold/xp 10`), while boar inherits tougher mid-game profile (`hp 360`, `attack 36`, `def 14`, `thorns 5`, `gold/xp 28`)
+- **Encounter templates updated:** Area 1 boar encounter templates were converted to beetle templates (`a1_beetle_duo`, `a1_beetle_bird_mix`, `a1_beetle_bandit_mix`); Area 2 beetle mix became boar mix (`a2_boar_scout_mix`)
+- **Verification status:** `npm run validate:data` passed (0 errors), `npm run build` passed
+
+## 2026-02-25 - Boss Challenge Button Relocated to Zone Header
+- **Boss challenge CTA moved:** `BossChallenge` button now renders directly under the zone label (`LAYOUT.zoneNav` area) instead of the bottom-center combat bar
+- **Overlap cleanup:** `ZoneNav` no longer renders `★ Boss Ready!` text when challenge is ready, so the button occupies that line cleanly
+- **Visual fit update:** challenge button style was compacted (smaller font/padding) to match the zone-header UI row
+
+## 2026-02-25 - Skill Points + Equipment Enhancement System
+- **Save schema v2 migration added:** retroactive `skillPoints` grant from level minus existing standard-upgrade levels (clamped to 0), plus default `enhancementLevels` for enhanceable slots
+- **Standard upgrades moved to skill currency:** six legit upgrades now cost flat `1 SP` per level (`currency: 'skillPoints'`), with `UpgradeManager` support for SP purchase checks/spend
+- **Enhancement domain added:** new `src/systems/EnhancementManager.js` with per-slot gold costs, +5% per level multipliers, level cap, and `ENHANCE_PURCHASED` event contract
+- **Enhancement wired into stats:** `ComputedStats.getEquipmentStatSum()` now applies per-slot enhancement multipliers on equipped item stat contributions
+- **UI updates shipped:** Upgrade panel rebranded to **SKILLS** with visible SP count; inventory supports equipped-item selection (click for details, shift/right-click quick unequip), enhancement badges, and `[ENHANCE]` action in equipped item details
+- **Verification status:** `npm run build` passed, `npm run verify:combat` passed
+
 ## 2026-02-25 - Player Tab in Balance GUI + Zone Save Bugfix
 - **New PLAYER_BALANCE in balance.js:** sparse `xpBias` (per-level) and `statGrowthBias` (per-stat) maps with accessor functions `getXpBias()` / `getStatGrowthBias()`
 - **XP bias wired into config.js:** `PROGRESSION_V2.xpForLevel()` now multiplies base XP by `getXpBias(level)`
@@ -710,4 +730,3 @@
 
 ## 2026-01-24
 - Initialized governance-only memory system (CLAUDE.md + .memory files).
-

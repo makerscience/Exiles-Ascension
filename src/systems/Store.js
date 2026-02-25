@@ -48,6 +48,8 @@ function createInitialState() {
     equipped: Object.fromEntries(ALL_SLOT_IDS.map(id => [id, null])),
     inventoryStacks: {},
     purchasedUpgrades: {},
+    skillPoints: 0,
+    enhancementLevels: Object.fromEntries(ENHANCEABLE_SLOT_IDS.map(id => [id, 0])),
     totalKills: 0,
     currentArea: 1,
     currentZone: 1,
@@ -80,6 +82,7 @@ function createInitialState() {
 // Fields that are stored as Decimal (BigNum) — used for hydration
 const DECIMAL_FIELDS = ['gold', 'glitchFragments', 'mana', 'prestigeMultiplier', 'playerHp'];
 const DECIMAL_STAT_FIELDS = ['xp', 'xpToNext'];
+const ENHANCEABLE_SLOT_IDS = ['head', 'chest', 'main_hand', 'legs', 'boots', 'gloves', 'amulet'];
 
 /**
  * Hydrate a saved plain object (strings from JSON) into live Decimal instances.
@@ -121,6 +124,21 @@ function hydrateState(saved) {
   }
   if (saved.inventoryStacks) fresh.inventoryStacks = saved.inventoryStacks;
   if (saved.purchasedUpgrades) fresh.purchasedUpgrades = { ...saved.purchasedUpgrades };
+  if (saved.skillPoints != null) {
+    const points = Number(saved.skillPoints);
+    fresh.skillPoints = Number.isFinite(points) ? Math.max(0, Math.floor(points)) : 0;
+  }
+  if (saved.enhancementLevels) {
+    const merged = {
+      ...fresh.enhancementLevels,
+      ...saved.enhancementLevels,
+    };
+    for (const slotId of Object.keys(merged)) {
+      const lvl = Number(merged[slotId]);
+      merged[slotId] = Number.isFinite(lvl) ? Math.max(0, Math.floor(lvl)) : 0;
+    }
+    fresh.enhancementLevels = merged;
+  }
   if (saved.totalKills != null) fresh.totalKills = saved.totalKills;
   if (saved.currentArea != null) fresh.currentArea = saved.currentArea;
   if (saved.currentZone != null) fresh.currentZone = saved.currentZone;
@@ -195,12 +213,13 @@ const Store = {
     state.playerStats.agi += growth.agi;
 
     state.playerStats.xpToNext = D(PROGRESSION_V2.xpForLevel(state.playerStats.level));
+    state.skillPoints += 1;
 
     emit(EVENTS.PROG_LEVEL_UP, {
       level: state.playerStats.level,
       stats: { ...state.playerStats },
     });
-    emit(EVENTS.STATE_CHANGED, { changedKeys: ['playerStats'] });
+    emit(EVENTS.STATE_CHANGED, { changedKeys: ['playerStats', 'skillPoints'] });
   },
 
   // ── Currency mutations ──────────────────────────────────────────
@@ -231,6 +250,22 @@ const Store = {
   spendFragments(amount) {
     state.glitchFragments = state.glitchFragments.minus(D(amount));
     emit(EVENTS.STATE_CHANGED, { changedKeys: ['glitchFragments'] });
+  },
+
+  addSkillPoints(amount) {
+    const n = Math.max(0, Math.floor(Number(amount) || 0));
+    if (n <= 0) return;
+    state.skillPoints += n;
+    emit(EVENTS.STATE_CHANGED, { changedKeys: ['skillPoints'] });
+  },
+
+  spendSkillPoints(amount) {
+    const n = Math.max(0, Math.floor(Number(amount) || 0));
+    if (n <= 0) return true;
+    if (state.skillPoints < n) return false;
+    state.skillPoints -= n;
+    emit(EVENTS.STATE_CHANGED, { changedKeys: ['skillPoints'] });
+    return true;
   },
 
   /** Multiply gold by a retention fraction (used during prestige). */
@@ -378,6 +413,23 @@ const Store = {
     state.purchasedUpgrades[upgradeId] += 1;
     emit(EVENTS.STATE_CHANGED, { changedKeys: ['purchasedUpgrades'] });
     return state.purchasedUpgrades[upgradeId];
+  },
+
+  getEnhancementLevel(slotId) {
+    return state.enhancementLevels[slotId] || 0;
+  },
+
+  incrementEnhancementLevel(slotId) {
+    if (!(slotId in state.enhancementLevels)) return 0;
+    state.enhancementLevels[slotId] += 1;
+    emit(EVENTS.STATE_CHANGED, { changedKeys: ['enhancementLevels'] });
+    return state.enhancementLevels[slotId];
+  },
+
+  /** Reset skill points to zero (used during prestige). */
+  resetSkillPoints() {
+    state.skillPoints = 0;
+    emit(EVENTS.STATE_CHANGED, { changedKeys: ['skillPoints'] });
   },
 
   /** Reset purchased upgrades (used during prestige). */

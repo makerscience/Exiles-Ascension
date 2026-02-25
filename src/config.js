@@ -89,7 +89,7 @@ export const CHEATS = {
 };
 
 export const SAVE = {
-  schemaVersion: 1,           // reset for v-slice save track
+  schemaVersion: 2,
   autosaveInterval: 30_000,   // ms
   minOfflineTime: 60_000,                // 60s — skip if quicker reload
   maxOfflineTime: 12 * 60 * 60 * 1000,  // 12 hours in ms

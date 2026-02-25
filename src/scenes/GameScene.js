@@ -175,6 +175,8 @@ export default class GameScene extends Phaser.Scene {
           deathFadeTimer: null,
           extraObjects: [],
           enraged: false,
+          flapTimer: null,
+          flapFrame: 0,
           atkTimerKey: null,
         },
         baseX: this._enemyX,
@@ -552,6 +554,7 @@ export default class GameScene extends Phaser.Scene {
       if (slot.state.poseRevertTimer) { slot.state.poseRevertTimer.remove(); slot.state.poseRevertTimer = null; }
       if (slot.state.reactDelayTimer) { slot.state.reactDelayTimer.remove(); slot.state.reactDelayTimer = null; }
       if (slot.state.deathFadeTimer) { slot.state.deathFadeTimer.remove(); slot.state.deathFadeTimer = null; }
+      if (slot.state.flapTimer) { slot.state.flapTimer.remove(); slot.state.flapTimer = null; }
       for (const obj of slot.state.extraObjects) obj.destroy();
       slot.state.extraObjects = [];
       slot.sprite.clearTint();
@@ -579,6 +582,7 @@ export default class GameScene extends Phaser.Scene {
     slot.state.spriteOffsetY = spriteOffsetY;
     slot.state.bottomAlignOffsetY = bottomAlignOffsetY;
     slot.state.lungeDist = (template?.lungeDistance || 20) * 2;
+    slot.state.attackSpriteOffsetY = template?.attackSpriteOffsetY ?? null;
     slot.state.enraged = false;
 
     // Position container (layoutCount can grow as summons are added)
@@ -607,6 +611,26 @@ export default class GameScene extends Phaser.Scene {
       slot.sprite.setInteractive({ useHandCursor: true });
       slot.rect.setVisible(false);
       slot.rect.disableInteractive();
+
+      // Wing-flap animation: oscillate between default and default2 textures
+      if (slot.state.flapTimer) { slot.state.flapTimer.remove(); slot.state.flapTimer = null; }
+      if (sprites.default2) {
+        slot.state.flapFrame = 0;
+        const frames = [sprites.default, sprites.default2];
+        slot.state.flapTimer = this.time.addEvent({
+          delay: 300,
+          loop: true,
+          callback: () => {
+            // Don't flap during reaction/attack/dead poses
+            if (!slot.state.currentSprites) return;
+            const tex = slot.sprite.texture.key;
+            if (tex !== frames[0] && tex !== frames[1]) return;
+            slot.state.flapFrame = (slot.state.flapFrame + 1) % 2;
+            slot.sprite.setTexture(frames[slot.state.flapFrame]);
+            slot.sprite.setDisplaySize(slot.state.spriteW, slot.state.spriteH);
+          },
+        });
+      }
     } else {
       slot.rect.setFillStyle(0xef4444);
       slot.rect.setPosition(0, 0);
@@ -708,6 +732,7 @@ export default class GameScene extends Phaser.Scene {
       if (slot.state.poseRevertTimer) { slot.state.poseRevertTimer.remove(); slot.state.poseRevertTimer = null; }
       if (slot.state.reactDelayTimer) { slot.state.reactDelayTimer.remove(); slot.state.reactDelayTimer = null; }
       if (slot.state.deathFadeTimer) { slot.state.deathFadeTimer.remove(); slot.state.deathFadeTimer = null; }
+      if (slot.state.flapTimer) { slot.state.flapTimer.remove(); slot.state.flapTimer = null; }
 
       // Clean up extra objects (e.g. stalker head)
       for (const obj of slot.state.extraObjects) obj.destroy();
@@ -1053,6 +1078,59 @@ export default class GameScene extends Phaser.Scene {
             targets: slot.sprite,
             alpha: 0, delay: 300, duration: 400, ease: 'Linear',
           });
+        } else if (slot.state.enemyId === 'a1_big_slime') {
+          // Greater Slime split — dead sprite fades, two small slimes emerge and split apart
+          const absX = slot.baseX + slot.sprite.x;
+          const absY = slot.baseY + slot.sprite.y;
+          const childW = 160;  // Hollow Slime sprite size
+          const childH = 240;
+
+          // 1. Fade out the dead sprite
+          this.tweens.add({
+            targets: slot.sprite,
+            alpha: 0, duration: 500, ease: 'Sine.easeIn',
+          });
+
+          // 2. Create two child slime sprites (default pose) at the center, initially invisible
+          const leftChild = this.add.image(absX, absY, 'slime001_default')
+            .setDisplaySize(childW, childH).setAlpha(0)
+            .setDepth(slot.sprite.depth + 1);
+          const rightChild = this.add.image(absX, absY, 'slime001_default')
+            .setDisplaySize(childW, childH).setAlpha(0)
+            .setDepth(slot.sprite.depth + 1);
+          slot.state.extraObjects.push(leftChild, rightChild);
+
+          // 3. After a short delay, fade children in while splitting apart
+          this.time.delayedCall(350, () => {
+            // Fade in + split left
+            this.tweens.add({
+              targets: leftChild,
+              x: absX - 100, alpha: 1,
+              duration: 350, ease: 'Quad.easeOut',
+            });
+            // Fade in + split right
+            this.tweens.add({
+              targets: rightChild,
+              x: absX + 100, alpha: 1,
+              duration: 350, ease: 'Quad.easeOut',
+            });
+
+            // 4. Hold briefly, then fade out before real spawns arrive at 1000ms
+            this.time.delayedCall(450, () => {
+              const cleanup = (obj) => {
+                obj.destroy();
+                slot.state.extraObjects = slot.state.extraObjects.filter(o => o !== obj);
+              };
+              this.tweens.add({
+                targets: leftChild, alpha: 0, duration: 150, ease: 'Linear',
+                onComplete: () => cleanup(leftChild),
+              });
+              this.tweens.add({
+                targets: rightChild, alpha: 0, duration: 150, ease: 'Linear',
+                onComplete: () => cleanup(rightChild),
+              });
+            });
+          });
         } else {
           // Default: knockback then slide away — local coords
           this.tweens.add({
@@ -1367,7 +1445,8 @@ export default class GameScene extends Phaser.Scene {
         // Reset to local home position before lunge
         this.tweens.killTweensOf(slot.sprite);
         slot.sprite.x = 0;
-        slot.sprite.y = slot.state.spriteOffsetY + slot.state.bottomAlignOffsetY;
+        const atkOffsetY = slot.state.attackSpriteOffsetY ?? slot.state.spriteOffsetY;
+        slot.sprite.y = atkOffsetY + slot.state.bottomAlignOffsetY;
 
         const isLeaper = slot.state.enemyId === 'a1_forest_rat' || slot.state.enemyId === 'a1_hollow_slime';
         const lungeDist = isLeaper ? slot.state.lungeDist * 2 : slot.state.lungeDist;
@@ -1393,6 +1472,7 @@ export default class GameScene extends Phaser.Scene {
           if (slot.state.currentSprites) {
             slot.sprite.setTexture(slot.state.currentSprites.default);
             slot.sprite.setDisplaySize(slot.state.spriteW, slot.state.spriteH);
+            slot.sprite.y = slot.state.spriteOffsetY + slot.state.bottomAlignOffsetY;
           }
           this._unlockWalk();
         });
@@ -1887,6 +1967,7 @@ export default class GameScene extends Phaser.Scene {
       if (slot.state.poseRevertTimer) slot.state.poseRevertTimer.remove();
       if (slot.state.reactDelayTimer) slot.state.reactDelayTimer.remove();
       if (slot.state.deathFadeTimer) slot.state.deathFadeTimer.remove();
+      if (slot.state.flapTimer) slot.state.flapTimer.remove();
       for (const obj of slot.state.extraObjects) obj.destroy();
       slot.container.destroy(true);
     }

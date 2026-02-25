@@ -10,6 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const AREAS_PATH = path.join(ROOT, 'src', 'data', 'areas.js');
 const BALANCE_PATH = path.join(ROOT, 'src', 'data', 'balance.js');
+const CONFIG_PATH = path.join(ROOT, 'src', 'config.js');
 const SIM_PATH = path.join(ROOT, 'scripts', 'balance-sim.js');
 const DUMP_PATH = path.join(__dirname, 'dump-zone-data.mjs');
 const PORT = 3001;
@@ -46,6 +47,13 @@ function parseZoneScaling(fileText) {
   let kv;
   while ((kv = kvRe.exec(m[1])) !== null) out[kv[1]] = parseFloat(kv[2]);
   return out;
+}
+
+function parseNormalDropChance(fileText) {
+  const m = fileText.match(/normalDropChance:\s*([+-]?\d+(?:\.\d+)?)/);
+  if (!m) return 0.10;
+  const v = parseFloat(m[1]);
+  return Number.isFinite(v) ? v : 0.10;
 }
 
 function formatZoneBlock(balance) {
@@ -102,12 +110,32 @@ export const ENEMY_BALANCE = {
 export const BOSS_BALANCE = {
 };
 
+export const LOOT_BALANCE = {
+  areaDropRate: {},
+  zoneDropRate: {},
+};
+
 export function getEnemyBias(enemyId, stat) {
   return ENEMY_BALANCE[enemyId]?.[stat] ?? 1.0;
 }
 
 export function getBossBias(bossId, stat) {
   return BOSS_BALANCE[bossId]?.[stat] ?? 1.0;
+}
+
+export function getAreaDropRate(areaId, fallback) {
+  const v = LOOT_BALANCE.areaDropRate?.[areaId];
+  return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : fallback;
+}
+
+export function getZoneDropRate(globalZone, fallback) {
+  const v = LOOT_BALANCE.zoneDropRate?.[globalZone];
+  return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : fallback;
+}
+
+export function getNormalDropChance(areaId, globalZone, baseChance) {
+  const areaRate = getAreaDropRate(areaId, baseChance);
+  return getZoneDropRate(globalZone, areaRate);
 }
 `;
 }
@@ -213,15 +241,61 @@ function savePlayerBalance(pb) {
   fs.writeFileSync(BALANCE_PATH, text, 'utf8');
 }
 
-let entityCache = null;
+function parseLootBalance(fileText) {
+  const out = { areaDropRate: {}, zoneDropRate: {} };
+  const m = fileText.match(/export const LOOT_BALANCE = \{([\s\S]*?)\n\};/);
+  if (!m) return out;
+  const areaM = m[1].match(/areaDropRate:\s*\{([^}]*)\}/);
+  if (areaM) {
+    const kvRe = /(\d+):\s*([+-]?\d+(?:\.\d+)?)/g;
+    let kv;
+    while ((kv = kvRe.exec(areaM[1])) !== null) {
+      const k = parseInt(kv[1], 10);
+      const v = parseFloat(kv[2]);
+      if (Number.isFinite(v)) out.areaDropRate[k] = v;
+    }
+  }
+  const zoneM = m[1].match(/zoneDropRate:\s*\{([^}]*)\}/);
+  if (zoneM) {
+    const kvRe = /(\d+):\s*([+-]?\d+(?:\.\d+)?)/g;
+    let kv;
+    while ((kv = kvRe.exec(zoneM[1])) !== null) {
+      const k = parseInt(kv[1], 10);
+      const v = parseFloat(kv[2]);
+      if (Number.isFinite(v)) out.zoneDropRate[k] = v;
+    }
+  }
+  return out;
+}
+
+function formatLootBalance(lb) {
+  const areaKeys = Object.keys(lb.areaDropRate || {}).map(Number).sort((a, b) => a - b);
+  const areaEntries = areaKeys
+    .filter(k => Number.isFinite(lb.areaDropRate[k]) && lb.areaDropRate[k] >= 0 && lb.areaDropRate[k] <= 1)
+    .map(k => `${k}: ${parseFloat(lb.areaDropRate[k].toFixed(4))}`);
+  const areaLine = areaEntries.length ? `{ ${areaEntries.join(', ')} }` : '{}';
+
+  const zoneKeys = Object.keys(lb.zoneDropRate || {}).map(Number).sort((a, b) => a - b);
+  const zoneEntries = zoneKeys
+    .filter(k => Number.isFinite(lb.zoneDropRate[k]) && lb.zoneDropRate[k] >= 0 && lb.zoneDropRate[k] <= 1)
+    .map(k => `${k}: ${parseFloat(lb.zoneDropRate[k].toFixed(4))}`);
+  const zoneLine = zoneEntries.length ? `{ ${zoneEntries.join(', ')} }` : '{}';
+
+  return `export const LOOT_BALANCE = {\n  areaDropRate: ${areaLine},\n  zoneDropRate: ${zoneLine},\n};`;
+}
+
+function saveLootBalance(lb) {
+  let text = fs.existsSync(BALANCE_PATH) ? fs.readFileSync(BALANCE_PATH, 'utf8') : scaffoldBalanceFile();
+  text = replaceOrAppend(text, 'LOOT_BALANCE', formatLootBalance(lb));
+  fs.writeFileSync(BALANCE_PATH, text, 'utf8');
+}
+
 function loadEntityData() {
-  if (entityCache) return Promise.resolve(entityCache);
   return new Promise((resolve, reject) => {
     exec(`node "${DUMP_PATH}"`, { cwd: ROOT }, (err, stdout, stderr) => {
       if (err) return reject(new Error(stderr || err.message));
       try {
-        entityCache = JSON.parse(stdout);
-        resolve(entityCache);
+        resolve(JSON.parse(stdout));
       } catch (e) {
         reject(e);
       }
@@ -261,9 +335,12 @@ function handleApi(req, res) {
   }
   if (req.method === 'GET' && req.url === '/api/balance-data') {
     const text = fs.existsSync(BALANCE_PATH) ? fs.readFileSync(BALANCE_PATH, 'utf8') : '';
+    const configText = fs.existsSync(CONFIG_PATH) ? fs.readFileSync(CONFIG_PATH, 'utf8') : '';
     sendJson(res, {
       enemyBalance: parseEntityBalance(text, 'ENEMY_BALANCE'),
       bossBalance: parseEntityBalance(text, 'BOSS_BALANCE'),
+      lootBalance: parseLootBalance(text),
+      normalDropChance: parseNormalDropChance(configText),
     });
     return;
   }
@@ -295,6 +372,13 @@ function handleApi(req, res) {
         xpOverride: {},
         statGrowthOverride: {},
       });
+      sendJson(res, { ok: true });
+    }).catch((e) => sendJson(res, { ok: false, error: e.message }, 400));
+    return;
+  }
+  if (req.method === 'POST' && req.url === '/api/save-loot') {
+    readBody(req).then((b) => {
+      saveLootBalance(b.lootBalance || { areaDropRate: {}, zoneDropRate: {} });
       sendJson(res, { ok: true });
     }).catch((e) => sendJson(res, { ok: false, error: e.message }, 400));
     return;
@@ -365,15 +449,16 @@ input[type=range]::-moz-range-thumb{width:11px;height:11px;border-radius:50%;bac
 #sim{display:none;background:#0a0a1a;border-top:2px solid #0f3460;padding:10px 12px}#sim pre{white-space:pre;max-height:500px;overflow:auto}
 </style></head><body>
 <header><h1>Balance Dials</h1><button id="save">Save to areas.js</button><button id="simbtn">Run Sim</button><button id="copy">Copy Code</button><div id="rates" class="rates">Loading...</div></header>
-<div class="tabs"><button class="tab-btn active" data-tab="zones">Zones</button><button class="tab-btn" data-tab="enemies">Enemies</button><button class="tab-btn" data-tab="bosses">Bosses</button><button class="tab-btn" data-tab="player">Player</button></div>
+<div class="tabs"><button class="tab-btn active" data-tab="zones">Zones</button><button class="tab-btn" data-tab="enemies">Enemies</button><button class="tab-btn" data-tab="bosses">Bosses</button><button class="tab-btn" data-tab="drops">Drops</button><button class="tab-btn" data-tab="player">Player</button></div>
 <div id="zones" class="tab-panel active"><div id="sparks" class="sparks"></div><div class="wrap"><table><thead><tr><th>Zone</th><th>Area</th><th>hp</th><th>atk</th><th>def</th><th>speed</th><th>regen</th><th>gold</th><th>xp</th></tr></thead><tbody id="zbody"></tbody></table></div></div>
 <div id="enemies" class="tab-panel"><div class="wrap"><table><thead><tr><th>Name</th><th>Zones</th><th>hp</th><th>atk</th><th>def</th><th>speed</th><th>regen</th><th>gold</th><th>Base XP</th><th>XP Value</th><th>XP Bias</th></tr></thead><tbody id="ebody"></tbody></table></div></div>
 <div id="bosses" class="tab-panel"><div class="wrap"><table><thead><tr><th>Name</th><th>Zone</th><th>Type</th><th>hp</th><th>atk</th><th>def</th><th>speed</th><th>regen</th><th>gold</th><th>xp</th></tr></thead><tbody id="bbody"></tbody></table></div></div>
+<div id="drops" class="tab-panel"><div class="wrap"><h3 style="color:#e94560;margin:8px 0 4px">Drop Rate Editor</h3><div class="meta" style="margin-bottom:4px">Edit absolute normal item drop rates. Zone values override area values; area values override global base.</div><div id="dropBase" class="meta" style="margin:2px 0 6px"></div><table><thead><tr><th>Area</th><th>Name</th><th>Base Drop %</th><th>Zones</th></tr></thead><tbody id="adbody"></tbody></table><h3 style="color:#e94560;margin:12px 0 4px">Zone Overrides</h3><table><thead><tr><th>Zone</th><th>Area</th><th>Base Drop %</th><th>Source</th></tr></thead><tbody id="zdbody"></tbody></table></div></div>
 <div id="player" class="tab-panel"><div class="wrap"><h3 style="color:#e94560;margin:8px 0 4px">Stat Growth per Level</h3><div class="meta" style="margin-bottom:4px">Set a Bias multiplier and/or an exact Override value. Override takes priority.</div><table><thead><tr><th>Stat</th><th>Base</th><th>Bias</th><th>Override</th><th>Effective</th></tr></thead><tbody id="sgbody"></tbody></table><h3 style="color:#e94560;margin:12px 0 4px">XP per Level</h3><div class="meta" style="margin-bottom:4px">Edit Base XP directly per level. Bias multiplies the (possibly edited) base. Override XP forces an exact effective value.</div><label class="meta" style="display:inline-flex;align-items:center;gap:6px;margin:2px 0 6px"><input id="xpCascade" type="checkbox" checked> Cascade XP edits forward (base + override)</label><table><thead><tr><th>Lvl</th><th>Base XP</th><th>Bias</th><th>Override XP</th><th>Effective</th><th>Cumulative</th><th>Growth %</th></tr></thead><tbody id="xpbody"></tbody></table><h3 style="color:#e94560;margin:12px 0 4px">Level Inspector</h3><div class="meta" style="margin-bottom:4px">Live preview of player stats based on current growth + XP settings. Use controls or click rows.</div><div class="lv-tools"><label class="meta">Focus Lv <input id="lvFocus" class="in" type="number" min="1" step="1" value="1"></label><input id="lvFocusRange" class="lv-focus-range" type="range" min="1" max="35" step="1" value="1"><label class="meta">Preview To Lv <input id="lvMax" class="in" type="number" min="1" max="120" step="1" value="35"></label></div><div id="lvCards" class="lv-cards"></div><table id="lvtable"><thead><tr><th>Lv</th><th>STR</th><th>DEF</th><th>HP</th><th>REGEN/s</th><th>AGI</th><th>Evade</th><th>XP To Next</th><th>Total XP To Reach</th></tr></thead><tbody id="lvbody"></tbody></table></div></div>
 <div id="sim"><h3>Sim Output</h3><pre id="simout"></pre></div>
 <script>
 var STATS=['hp','atk','def','speed','regen','gold','xp'],TOTAL_ZONES=${TOTAL_ZONES},AREA_MAP=${AREAS_JSON},SPW=120,SPH=44,SPC=22,SPM=18;
-var balance={},enemyBalance={},bossBalance={},playerBalance={xpBias:{},xpBase:{},statGrowthBias:{},xpOverride:{},statGrowthOverride:{}},entityData={enemies:[],bosses:[]},active='zones',cellRefs={};
+var balance={},enemyBalance={},bossBalance={},playerBalance={xpBias:{},xpBase:{},statGrowthBias:{},xpOverride:{},statGrowthOverride:{}},lootBalance={areaDropRate:{},zoneDropRate:{}},normalDropChance=0.10,entityData={enemies:[],bosses:[]},active='zones',cellRefs={};
 var BASE_XP_TABLE=[50,75,110,155,210,280,360,450,560,680,820,980,1160,1360,1580,1830,2100,2400,2750,3120,3530,3980,4480,5020,5620,6280,7000,7800,8680,9640,10700,11870,13150,14560,16100];
 var BASE_STAT_GROWTH={str:2,def:2,hp:12,regen:0.1,agi:0.5};
 var PLAYER_STATS=['str','def','hp','regen','agi'];
@@ -459,7 +544,14 @@ function refreshEnemyXpValueInput(id){var slot=enemyXpValueInputs[id];if(!slot)r
 function buildZones(){var tb=document.getElementById('zbody');tb.innerHTML='';var last=null;for(var z=1;z<=TOTAL_ZONES;z++){var a=areaForZone(z);if(a.id!==last){last=a.id;var hr=document.createElement('tr');hr.className='areahead';var hc=document.createElement('td');hc.colSpan=9;hc.textContent='A'+a.id+' - '+a.name+' (zones '+a.zones[0]+'-'+a.zones[1]+')';hr.appendChild(hc);tb.appendChild(hr)}var tr=document.createElement('tr');tr.dataset.zone=z;tr.addEventListener('dblclick',(function(zz){return function(){resetZone(zz)}})(z));tr.addEventListener('contextmenu',(function(zz){return function(e){e.preventDefault();resetZone(zz)}})(z));var zc=document.createElement('td');zc.className='zone';zc.textContent=z;tr.appendChild(zc);var ac=document.createElement('td');ac.className='meta';ac.textContent='A'+a.id;tr.appendChild(ac);(function(zz){STATS.forEach(function(s){mkCell(tr,zz+'-'+s,function(){return gv(zz,s)},function(v){sv(zz,s,v)},function(){spark(s)})})})(z);tb.appendChild(tr)}}
 function buildEnemies(){
   var tb=document.getElementById('ebody');tb.innerHTML='';enemyXpValueInputs={};enemyAbsInputs={};
-  (entityData.enemies||[]).forEach(function(e){
+  var enemies=(entityData.enemies||[]).slice().sort(function(a,b){
+    var az0=(a.zones&&a.zones[0])||999, bz0=(b.zones&&b.zones[0])||999;
+    if(az0!==bz0)return az0-bz0;
+    var az1=(a.zones&&a.zones[1])||999, bz1=(b.zones&&b.zones[1])||999;
+    if(az1!==bz1)return az1-bz1;
+    return String(a.name||a.id).localeCompare(String(b.name||b.id));
+  });
+  enemies.forEach(function(e){
     var tr=document.createElement('tr');
     tr.addEventListener('dblclick',function(){resetEnt('e',e.id,enemyBalance);ENEMY_ABS_STATS.forEach(function(s){refreshEnemyAbsInput(e.id,s)});refreshEnemyXpValueInput(e.id)});
     tr.addEventListener('contextmenu',function(ev){ev.preventDefault();resetEnt('e',e.id,enemyBalance);ENEMY_ABS_STATS.forEach(function(s){refreshEnemyAbsInput(e.id,s)});refreshEnemyXpValueInput(e.id)});
@@ -492,6 +584,69 @@ function buildEnemies(){
 }
 function cls(t){if(t==='AREA')return'area';if(t==='ELITE')return'elite';return'mini'}
 function buildBosses(){var tb=document.getElementById('bbody');tb.innerHTML='';(entityData.bosses||[]).forEach(function(b){var tr=document.createElement('tr');tr.addEventListener('dblclick',function(){resetEnt('b',b.id,bossBalance)});tr.addEventListener('contextmenu',function(ev){ev.preventDefault();resetEnt('b',b.id,bossBalance)});var n=document.createElement('td');n.className='name';n.textContent=b.name;tr.appendChild(n);var z=document.createElement('td');z.className='meta';z.textContent=String(b.zone);tr.appendChild(z);var t=document.createElement('td');t.className='meta';var badge=document.createElement('span');badge.className=cls(b.bossType);badge.textContent=b.bossType;t.appendChild(badge);tr.appendChild(t);STATS.forEach(function(s){mkCell(tr,'b-'+b.id+'-'+s,function(){return gev(bossBalance,b.id,s)},function(v){sev(bossBalance,b.id,s,v)})});tb.appendChild(tr)})}
+function clampRate(v){if(!Number.isFinite(v))return 0;return Math.max(0,Math.min(1,v))}
+function rateToPct(rate){return (clampRate(rate)*100).toFixed(2)}
+function parsePct(raw){var p=parseFloat(raw);if(!Number.isFinite(p))return null;return clampRate(p/100)}
+function areaDropRateFor(areaId){var v=lootBalance.areaDropRate&&lootBalance.areaDropRate[areaId];return Number.isFinite(v)?clampRate(v):clampRate(normalDropChance)}
+function zoneDropRateFor(zone){var v=lootBalance.zoneDropRate&&lootBalance.zoneDropRate[zone];if(Number.isFinite(v))return clampRate(v);return areaDropRateFor(areaForZone(zone).id)}
+function zoneDropSource(zone){if(Number.isFinite(lootBalance.zoneDropRate&&lootBalance.zoneDropRate[zone]))return'zone';if(Number.isFinite(lootBalance.areaDropRate&&lootBalance.areaDropRate[areaForZone(zone).id]))return'area';return'global'}
+function buildDrops(){
+  var base=document.getElementById('dropBase');if(base)base.textContent='Global base drop chance: '+rateToPct(normalDropChance)+'% (from LOOT_V2.normalDropChance)';
+  var atb=document.getElementById('adbody');if(atb){atb.innerHTML='';AREA_MAP.forEach(function(a){
+    var tr=document.createElement('tr');
+    var ac=document.createElement('td');ac.className='zone';ac.textContent='A'+a.id;tr.appendChild(ac);
+    var nc=document.createElement('td');nc.className='name';nc.textContent=a.name;tr.appendChild(nc);
+    var rc=document.createElement('td');
+    var ri=document.createElement('input');ri.type='number';ri.min='0';ri.max='100';ri.step='0.01';ri.className='in';ri.style.width='82px';ri.value=rateToPct(areaDropRateFor(a.id));
+    function applyArea(){
+      var raw=(ri.value||'').trim();
+      if(!raw){delete lootBalance.areaDropRate[a.id];buildDrops();return}
+      var rate=parsePct(raw);if(rate===null){buildDrops();return}
+      if(Math.abs(rate-clampRate(normalDropChance))<0.000001) delete lootBalance.areaDropRate[a.id];
+      else lootBalance.areaDropRate[a.id]=rate;
+      buildDrops();
+    }
+    ri.addEventListener('change',applyArea);ri.addEventListener('blur',applyArea);
+    rc.appendChild(ri);tr.appendChild(rc);
+    var zc=document.createElement('td');zc.className='meta';zc.textContent=a.zones[0]+'-'+a.zones[1];tr.appendChild(zc);
+    atb.appendChild(tr);
+  })}
+  var ztb=document.getElementById('zdbody');if(ztb){ztb.innerHTML='';for(var z=1;z<=TOTAL_ZONES;z++){
+    var area=areaForZone(z),tr=document.createElement('tr');
+    var zc=document.createElement('td');zc.className='zone';zc.textContent=String(z);tr.appendChild(zc);
+    var ac=document.createElement('td');ac.className='meta';ac.textContent='A'+area.id;tr.appendChild(ac);
+    var rc=document.createElement('td');
+    var ri=document.createElement('input');ri.type='number';ri.min='0';ri.max='100';ri.step='0.01';ri.className='in';ri.style.width='82px';ri.value=rateToPct(zoneDropRateFor(z));
+    function applyZone(zone,input){
+      return function(){
+        var raw=(input.value||'').trim();
+        if(!raw){delete lootBalance.zoneDropRate[zone];buildDrops();return}
+        var rate=parsePct(raw);if(rate===null){buildDrops();return}
+        var fallback=areaDropRateFor(areaForZone(zone).id);
+        if(Math.abs(rate-fallback)<0.000001) delete lootBalance.zoneDropRate[zone];
+        else lootBalance.zoneDropRate[zone]=rate;
+        buildDrops();
+      };
+    }
+    ri.addEventListener('change',applyZone(z,ri));ri.addEventListener('blur',applyZone(z,ri));
+    rc.appendChild(ri);tr.appendChild(rc);
+    var sc=document.createElement('td');sc.className='meta';sc.textContent=zoneDropSource(z);tr.appendChild(sc);
+    ztb.appendChild(tr);
+  }}
+}
+function cleanLoot(){
+  var out={areaDropRate:{},zoneDropRate:{}};
+  Object.keys(lootBalance.areaDropRate||{}).forEach(function(k){var n=parseInt(k,10),v=clampRate(lootBalance.areaDropRate[k]);if(Number.isFinite(v)&&Math.abs(v-clampRate(normalDropChance))>0.000001)out.areaDropRate[n]=parseFloat(v.toFixed(4))});
+  for(var z=1;z<=TOTAL_ZONES;z++){if(!Number.isFinite(lootBalance.zoneDropRate&&lootBalance.zoneDropRate[z]))continue;var v=clampRate(lootBalance.zoneDropRate[z]),fallback=areaDropRateFor(areaForZone(z).id);if(Math.abs(v-fallback)>0.000001)out.zoneDropRate[z]=parseFloat(v.toFixed(4))}
+  return out;
+}
+function fmtLoot(lb){
+  var areaKeys=Object.keys(lb.areaDropRate||{}).map(Number).sort(function(a,b){return a-b});
+  var areaEntries=areaKeys.map(function(k){return k+': '+parseFloat(lb.areaDropRate[k].toFixed(4))});
+  var zoneKeys=Object.keys(lb.zoneDropRate||{}).map(Number).sort(function(a,b){return a-b});
+  var zoneEntries=zoneKeys.map(function(k){return k+': '+parseFloat(lb.zoneDropRate[k].toFixed(4))});
+  return 'export const LOOT_BALANCE = {\\n  areaDropRate: '+(areaEntries.length?'{ '+areaEntries.join(', ')+' }':'{}')+',\\n  zoneDropRate: '+(zoneEntries.length?'{ '+zoneEntries.join(', ')+' }':'{}')+',\\n};';
+}
 function xpBiasForLevel(lv){return playerBalance.xpBias[lv]!==undefined?playerBalance.xpBias[lv]:1}
 function xpBaseForLevel(lv){var v=playerBalance.xpBase&&playerBalance.xpBase[lv];if(Number.isFinite(v)){var n=Math.floor(v);if(n>0)return n}return BASE_XP_TABLE[lv-1]}
 function xpOverrideForLevel(lv){var v=playerBalance.xpOverride&&playerBalance.xpOverride[lv];if(!Number.isFinite(v))return null;var n=Math.floor(v);return n>0?n:null}
@@ -698,12 +853,53 @@ function fmtZones(b){var ks=Object.keys(b).map(Number).sort(function(a,b2){retur
 function fmtMap(m,name){var ids=Object.keys(m).sort();if(!ids.length)return'export const '+name+' = {};';var ls=ids.map(function(id){var p=Object.keys(m[id]).map(function(k){return k+': '+parseFloat(m[id][k].toFixed(2)).toFixed(2)}).join(', ');return'  \\''+id+'\\': { '+p+' },'});return'export const '+name+' = {\\n'+ls.join('\\n')+'\\n};'}
 function cleanPlayer(){var o={xpBias:{},xpBase:{},statGrowthBias:{},xpOverride:{},statGrowthOverride:{}};for(var lv=1;lv<=35;lv++){var b=xpBiasForLevel(lv);if(Math.abs(b-1)>0.0001)o.xpBias[lv]=parseFloat(b.toFixed(2));var xb=xpBaseForLevel(lv);if(xb!==BASE_XP_TABLE[lv-1])o.xpBase[lv]=xb;var ov=xpOverrideForLevel(lv);if(ov!==null){var fromBias=Math.floor(xb*b);if(ov!==fromBias)o.xpOverride[lv]=ov}}PLAYER_STATS.forEach(function(s){var b=statGrowthBiasFor(s);if(Math.abs(b-1)>0.0001)o.statGrowthBias[s]=parseFloat(b.toFixed(2));var ov=statGrowthOverrideFor(s);if(ov!==null){var fromBias=BASE_STAT_GROWTH[s]*b;if(Math.abs(ov-fromBias)>0.0001)o.statGrowthOverride[s]=parseFloat(ov.toFixed(3))}});return o}
 function fmtPlayer(pb){var xpKeys=Object.keys(pb.xpBias).map(Number).sort(function(a,b){return a-b});var xpEntries=xpKeys.map(function(k){return k+': '+pb.xpBias[k]});var xpLine=xpEntries.length?'{ '+xpEntries.join(', ')+' }':'{}';var xbKeys=Object.keys(pb.xpBase).map(Number).sort(function(a,b){return a-b});var xbEntries=xbKeys.map(function(k){return k+': '+Math.floor(pb.xpBase[k])});var xbLine=xbEntries.length?'{ '+xbEntries.join(', ')+' }':'{}';var sgKeys=Object.keys(pb.statGrowthBias).sort();var sgEntries=sgKeys.map(function(k){return k+': '+pb.statGrowthBias[k]});var sgLine=sgEntries.length?'{ '+sgEntries.join(', ')+' }':'{}';var xoKeys=Object.keys(pb.xpOverride).map(Number).sort(function(a,b){return a-b});var xoEntries=xoKeys.map(function(k){return k+': '+Math.floor(pb.xpOverride[k])});var xoLine=xoEntries.length?'{ '+xoEntries.join(', ')+' }':'{}';var soKeys=Object.keys(pb.statGrowthOverride).sort();var soEntries=soKeys.map(function(k){return k+': '+parseFloat(pb.statGrowthOverride[k].toFixed(3))});var soLine=soEntries.length?'{ '+soEntries.join(', ')+' }':'{}';return'export const PLAYER_BALANCE = {\\n  xpBias: '+xpLine+',\\n  xpBase: '+xbLine+',\\n  statGrowthBias: '+sgLine+',\\n  xpOverride: '+xoLine+',\\n  statGrowthOverride: '+soLine+',\\n};'}
-function setTab(tab){active=tab;document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===tab)});document.querySelectorAll('.tab-panel').forEach(function(p){p.classList.toggle('active',p.id===tab)});document.getElementById('save').textContent=tab==='zones'?'Save to areas.js':'Save to balance.js'}
-function load(){Promise.all([fetch('/api/data').then(function(r){return r.json()}),fetch('/api/entity-data').then(function(r){return r.json()}),fetch('/api/balance-data').then(function(r){return r.json()}),fetch('/api/player-data').then(function(r){return r.json()})]).then(function(all){var z=all[0],e=all[1],b=all[2],p=all[3];balance={};Object.keys(z.balance||{}).forEach(function(k){balance[parseInt(k,10)]=Object.assign({},z.balance[k])});enemyBalance=Object.assign({},b.enemyBalance||{});bossBalance=Object.assign({},b.bossBalance||{});playerBalance=Object.assign({xpBias:{},xpBase:{},statGrowthBias:{},xpOverride:{},statGrowthOverride:{}},p.playerBalance||{});playerBalance.xpBias=Object.assign({},playerBalance.xpBias||{});playerBalance.xpBase=Object.assign({},playerBalance.xpBase||{});playerBalance.statGrowthBias=Object.assign({},playerBalance.statGrowthBias||{});playerBalance.xpOverride=Object.assign({},playerBalance.xpOverride||{});playerBalance.statGrowthOverride=Object.assign({},playerBalance.statGrowthOverride||{});entityData=e||{enemies:[],bosses:[]};var s=z.scaling||{};document.getElementById('rates').textContent='Base scaling: hp x'+(s.hp?(1+s.hp).toFixed(2):'?')+'/zone | atk x'+(s.atk?(1+s.atk).toFixed(2):'?')+'/zone | gold x'+(s.gold?(1+s.gold).toFixed(2):'?')+'/zone | xp x'+(s.xp?(1+s.xp).toFixed(2):'?')+'/zone';cellRefs={};buildZones();buildSparks();buildEnemies();buildBosses();buildPlayer();var xpc=document.getElementById('xpCascade');if(xpc){xpc.addEventListener('change',function(){refreshXpBaseInputs();refreshXpOverrideInputs();recomputeXp()})}setTab('zones')}).catch(function(err){document.getElementById('rates').textContent='Error: '+err.message})}
+function setTab(tab){
+  active=tab;
+  document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===tab)});
+  document.querySelectorAll('.tab-panel').forEach(function(p){p.classList.toggle('active',p.id===tab)});
+  document.getElementById('save').textContent=tab==='zones'?'Save to areas.js':'Save to balance.js';
+}
+function load(){
+  Promise.all([
+    fetch('/api/data').then(function(r){return r.json()}),
+    fetch('/api/entity-data').then(function(r){return r.json()}),
+    fetch('/api/balance-data').then(function(r){return r.json()}),
+    fetch('/api/player-data').then(function(r){return r.json()}),
+  ]).then(function(all){
+    var z=all[0],e=all[1],b=all[2],p=all[3];
+    balance={};
+    Object.keys(z.balance||{}).forEach(function(k){balance[parseInt(k,10)]=Object.assign({},z.balance[k])});
+    enemyBalance=Object.assign({},b.enemyBalance||{});
+    bossBalance=Object.assign({},b.bossBalance||{});
+    lootBalance=Object.assign({areaDropRate:{},zoneDropRate:{}},b.lootBalance||{});
+    lootBalance.areaDropRate=Object.assign({},lootBalance.areaDropRate||{});
+    lootBalance.zoneDropRate=Object.assign({},lootBalance.zoneDropRate||{});
+    normalDropChance=Number.isFinite(b.normalDropChance)?b.normalDropChance:0.10;
+    playerBalance=Object.assign({xpBias:{},xpBase:{},statGrowthBias:{},xpOverride:{},statGrowthOverride:{}},p.playerBalance||{});
+    playerBalance.xpBias=Object.assign({},playerBalance.xpBias||{});
+    playerBalance.xpBase=Object.assign({},playerBalance.xpBase||{});
+    playerBalance.statGrowthBias=Object.assign({},playerBalance.statGrowthBias||{});
+    playerBalance.xpOverride=Object.assign({},playerBalance.xpOverride||{});
+    playerBalance.statGrowthOverride=Object.assign({},playerBalance.statGrowthOverride||{});
+    entityData=e||{enemies:[],bosses:[]};
+    var s=z.scaling||{};
+    document.getElementById('rates').textContent='Base scaling: hp x'+(s.hp?(1+s.hp).toFixed(2):'?')+'/zone | atk x'+(s.atk?(1+s.atk).toFixed(2):'?')+'/zone | gold x'+(s.gold?(1+s.gold).toFixed(2):'?')+'/zone | xp x'+(s.xp?(1+s.xp).toFixed(2):'?')+'/zone';
+    cellRefs={};
+    buildZones();
+    buildSparks();
+    buildEnemies();
+    buildBosses();
+    buildDrops();
+    buildPlayer();
+    var xpc=document.getElementById('xpCascade');
+    if(xpc){xpc.addEventListener('change',function(){refreshXpBaseInputs();refreshXpOverrideInputs();recomputeXp()})}
+    setTab('zones');
+  }).catch(function(err){document.getElementById('rates').textContent='Error: '+err.message});
+}
 document.querySelectorAll('.tab-btn').forEach(function(b){b.addEventListener('click',function(){setTab(b.dataset.tab)})});
-document.getElementById('save').addEventListener('click',function(){var btn=this,url,payload;if(active==='zones'){url='/api/save';payload={balance:cleanZones()}}else if(active==='player'){url='/api/save-player';payload={playerBalance:cleanPlayer()}}else{url='/api/save-balance';payload={enemyBalance:cleanMap(enemyBalance),bossBalance:cleanMap(bossBalance)}}fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(r){return r.json()}).then(function(j){if(!j.ok){alert('Save failed: '+(j.error||'unknown'));return}var label=active==='zones'?'Save to areas.js':'Save to balance.js';btn.textContent='Saved!';btn.classList.add('success');setTimeout(function(){btn.textContent=label;btn.classList.remove('success')},2000)}).catch(function(e){alert('Save error: '+e.message)})});
+document.getElementById('save').addEventListener('click',function(){var btn=this,url,payload;if(active==='zones'){url='/api/save';payload={balance:cleanZones()}}else if(active==='player'){url='/api/save-player';payload={playerBalance:cleanPlayer()}}else if(active==='drops'){url='/api/save-loot';payload={lootBalance:cleanLoot()}}else{url='/api/save-balance';payload={enemyBalance:cleanMap(enemyBalance),bossBalance:cleanMap(bossBalance)}}fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(r){return r.json()}).then(function(j){if(!j.ok){alert('Save failed: '+(j.error||'unknown'));return}var label=active==='zones'?'Save to areas.js':'Save to balance.js';btn.textContent='Saved!';btn.classList.add('success');setTimeout(function(){btn.textContent=label;btn.classList.remove('success')},2000)}).catch(function(e){alert('Save error: '+e.message)})});
 document.getElementById('simbtn').addEventListener('click',function(){var p=document.getElementById('sim'),o=document.getElementById('simout');p.style.display='block';o.textContent='Running simulation...';fetch('/api/sim',{method:'POST'}).then(function(r){return r.json()}).then(function(j){o.textContent=j.output||'(no output)';p.scrollIntoView({behavior:'smooth',block:'start'})}).catch(function(e){o.textContent='Error: '+e.message})});
-document.getElementById('copy').addEventListener('click',function(){var btn=this,code='';if(active==='zones')code=fmtZones(cleanZones());else if(active==='player')code=fmtPlayer(cleanPlayer());else if(active==='enemies')code=fmtMap(cleanMap(enemyBalance),'ENEMY_BALANCE');else code=fmtMap(cleanMap(bossBalance),'BOSS_BALANCE');navigator.clipboard.writeText(code).then(function(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy Code'},1500)}).catch(function(e){alert('Copy failed: '+e.message)})});
+document.getElementById('copy').addEventListener('click',function(){var btn=this,code='';if(active==='zones')code=fmtZones(cleanZones());else if(active==='player')code=fmtPlayer(cleanPlayer());else if(active==='drops')code=fmtLoot(cleanLoot());else if(active==='enemies')code=fmtMap(cleanMap(enemyBalance),'ENEMY_BALANCE');else code=fmtMap(cleanMap(bossBalance),'BOSS_BALANCE');navigator.clipboard.writeText(code).then(function(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy Code'},1500)}).catch(function(e){alert('Copy failed: '+e.message)})});
 load();
 </script></body></html>`;
 

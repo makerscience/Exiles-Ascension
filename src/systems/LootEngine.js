@@ -5,8 +5,8 @@ import Store from './Store.js';
 import { createScope, emit, EVENTS } from '../events.js';
 import { LOOT_V2 } from '../config.js';
 import { getItemsForZone, getItem } from '../data/items.js';
-import { getArea } from '../data/areas.js';
 import { getBossForZone } from '../data/bosses.js';
+import { getNormalDropChance } from '../data/balance.js';
 import { getSlotUnlockZone, getPlayerGlobalZone, ACTIVE_SLOT_IDS } from '../data/equipSlots.js';
 import InventorySystem from './InventorySystem.js';
 
@@ -45,7 +45,11 @@ const LootEngine = {
 
   _handleNormalKill(data) {
     const lootBonus = data.lootBonus || { dropChanceMult: 1.0, rarityBoost: 0 };
-    const dropChance = LOOT_V2.normalDropChance * lootBonus.dropChanceMult;
+    const state = Store.getState();
+    const areaId = state.currentArea;
+    const globalZone = getPlayerGlobalZone();
+    const baseChance = getNormalDropChance(areaId, globalZone, LOOT_V2.normalDropChance);
+    const dropChance = Math.max(0, Math.min(1, baseChance * lootBonus.dropChanceMult));
     if (Math.random() > dropChance) return;
 
     const item = LootEngine._pickItem();

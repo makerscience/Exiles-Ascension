@@ -51,6 +51,7 @@ export const EVENTS = {
 
   // Upgrades / Cheats / Prestige
   UPG_PURCHASED:        'upg:purchased',
+  ENHANCE_PURCHASED:    'enhance:purchased',
   CHEAT_UNLOCKED:       'cheat:unlocked',
   CHEAT_TOGGLED:        'cheat:toggled',
   PRESTIGE_AVAILABLE:   'prestige:available',
@@ -171,6 +172,7 @@ const EVENT_CONTRACTS = {
   // Other
   [EVENTS.STATE_CHANGED]:        [],
   [EVENTS.PRESTIGE_PERFORMED]:   ['count'],
+  [EVENTS.ENHANCE_PURCHASED]:    ['slotId', 'level', 'cost'],
   [EVENTS.TERRITORY_CLAIMED]:    ['territoryId', 'name', 'buff'],
   [EVENTS.POWER_SMASH_USED]:     ['multiplier'],
   [EVENTS.RAPID_STRIKES_USED]:   ['hitCount'],

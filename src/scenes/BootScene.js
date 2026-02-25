@@ -43,6 +43,18 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('blightedstalker_dead',     'Images/Enemies/area1/blightedstalker_dead.png');
     this.load.image('blightedstalker_dead2',    'Images/Enemies/area1/blightedstalker_dead2.png');
     this.load.image('blightedstalker_head',     'Images/Enemies/area1/blightedstalker_head.png');
+    this.load.image('razorwing001_default1', 'Images/Enemies/area1/razorwing001_default1.png');
+    this.load.image('razorwing001_default2', 'Images/Enemies/area1/razorwing001_default2.png');
+    this.load.image('razorwing001_reaction', 'Images/Enemies/area1/razorwing001_reaction.png');
+    this.load.image('razorwing001_dead',     'Images/Enemies/area1/razorwing001_dead.png');
+    this.load.image('greaterslime001_default',  'Images/Enemies/area1/greaterslime001_default.png');
+    this.load.image('greaterslime001_reaction', 'Images/Enemies/area1/greaterslime001_reaction.png');
+    this.load.image('greaterslime001_attack',   'Images/Enemies/area1/greaterslime001_attack.png');
+    this.load.image('greaterslime001_dead',     'Images/Enemies/area1/greaterslime001_dead.png');
+    this.load.image('armoredbeetle001_default',  'Images/Enemies/area1/armoredbeetle001_default.png');
+    this.load.image('armoredbeetle001_reaction', 'Images/Enemies/area1/armoredbeetle001_reaction.png');
+    this.load.image('armoredbeetle001_attack',   'Images/Enemies/area1/armoredbeetle001_attack.png');
+    this.load.image('armoredbeetle001_dead',     'Images/Enemies/area1/armoredbeetle001_dead.png');
     this.load.image('player001_default',        'Images/Player001_default.png');
     this.load.image('player001_strongpunch',    'Images/Player001_strongpunch.png');
     this.load.image('player001_jumpkick',       'Images/Player001_jumpkick.png');
@@ -166,6 +178,9 @@ export default class BootScene extends Phaser.Scene {
       { keys: ['forestrat001_default', 'forestrat001_reaction', 'forestrat001_attack', 'forestrat001_dead'], w: 250, h: 250 },
       { keys: ['feralhound_default', 'feralhound_reaction', 'feralhound_attack', 'feralhound_dead'], w: 512, h: 280 },
       { keys: ['thornbackboar_default', 'thornbackboar_reaction', 'thornbackboar_attack', 'thornbackboar_dead'], w: 560, h: 306 },
+      { keys: ['razorwing001_default1', 'razorwing001_default2', 'razorwing001_reaction', 'razorwing001_dead'], w: 400, h: 400 },
+      { keys: ['greaterslime001_default', 'greaterslime001_reaction', 'greaterslime001_attack', 'greaterslime001_dead'], w: 840, h: 672 },
+      { keys: ['armoredbeetle001_default', 'armoredbeetle001_reaction', 'armoredbeetle001_attack', 'armoredbeetle001_dead'], w: 400, h: 400 },
       { keys: ['blightedstalker_default', 'blightedstalker_reaction', 'blightedstalker_attack', 'blightedstalker_dead', 'blightedstalker_dead2'], w: 396, h: 478 },
       { keys: ['blightedstalker_head'], w: 160, h: 160 },
     ];

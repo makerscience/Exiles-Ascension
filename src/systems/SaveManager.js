@@ -11,6 +11,15 @@ const BACKUP_KEY = 'litrpg_idle_vslice_save_backup';
 const LEGACY_PRIMARY_KEY = 'litrpg_idle_save';
 const LEGACY_BACKUP_KEY = 'litrpg_idle_save_backup';
 const LEGACY_ARCHIVED_KEY = 'litrpg_idle_legacy_archive';
+const ENHANCEABLE_SLOT_IDS = ['head', 'chest', 'main_hand', 'legs', 'boots', 'gloves', 'amulet'];
+const STANDARD_UPGRADE_IDS = [
+  'sharpen_blade',
+  'battle_hardening',
+  'auto_attack_speed',
+  'gold_find',
+  'power_smash_damage',
+  'power_smash_recharge',
+];
 
 let store = null;
 let autosaveTimer = null;
@@ -21,20 +30,46 @@ let saveRequestedUnsub = null;
  *  Fresh save track for the vertical slice — starts at v1, no legacy migrations.
  */
 const migrations = {
-  // Future v-slice migrations go here (e.g. 2: (data) => { ... })
+  2: (data) => {
+    const next = { ...data };
+
+    if (next.skillPoints == null) {
+      const level = Number(next?.playerStats?.level ?? 1);
+      const totalEarned = Math.max(level - 1, 0);
+      const purchased = next.purchasedUpgrades || {};
+      const spentOnStandard = STANDARD_UPGRADE_IDS.reduce((sum, id) => {
+        const value = Number(purchased[id] || 0);
+        return sum + (Number.isFinite(value) ? Math.max(0, value) : 0);
+      }, 0);
+      next.skillPoints = Math.max(totalEarned - spentOnStandard, 0);
+    }
+
+    if (next.enhancementLevels == null) {
+      next.enhancementLevels = Object.fromEntries(ENHANCEABLE_SLOT_IDS.map(id => [id, 0]));
+    } else {
+      next.enhancementLevels = {
+        ...Object.fromEntries(ENHANCEABLE_SLOT_IDS.map(id => [id, 0])),
+        ...next.enhancementLevels,
+      };
+    }
+
+    return next;
+  },
 };
 
 /** Run all applicable migrations in order. */
 function migrate(data) {
   let current = data.schemaVersion ?? 1;
+  let next = data;
   const versions = Object.keys(migrations).map(Number).sort((a, b) => a - b);
   for (const version of versions) {
     if (current < version) {
-      data = migrations[version](data);
+      next = migrations[version](next);
       current = version;
     }
   }
-  return data;
+  next.schemaVersion = current;
+  return next;
 }
 
 const SaveManager = {

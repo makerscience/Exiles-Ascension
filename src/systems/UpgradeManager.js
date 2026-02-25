@@ -27,6 +27,9 @@ const UpgradeManager = {
     if (upgrade.currency === 'gold') {
       return state.gold.gte(cost);
     }
+    if (upgrade.currency === 'skillPoints') {
+      return state.skillPoints >= upgrade.costFormula(level);
+    }
     if (upgrade.currency === 'glitchFragments') {
       return state.glitchFragments.gte(cost);
     }
@@ -49,6 +52,8 @@ const UpgradeManager = {
     // Deduct currency
     if (upgrade.currency === 'gold') {
       Store.spendGold(cost);
+    } else if (upgrade.currency === 'skillPoints') {
+      if (!Store.spendSkillPoints(cost)) return false;
     } else if (upgrade.currency === 'glitchFragments') {
       Store.spendFragments(cost);
     }

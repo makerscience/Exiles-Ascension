@@ -4,6 +4,7 @@
 import Store from './Store.js';
 import UpgradeManager from './UpgradeManager.js';
 import TerritoryManager from './TerritoryManager.js';
+import EnhancementManager from './EnhancementManager.js';
 import { D } from './BigNum.js';
 import { COMBAT_V2, STANCES } from '../config.js';
 import { getScaledItem } from '../data/items.js';
@@ -22,11 +23,12 @@ function _clampMultiplier(value, fallback = 1) {
 function getEquipmentStatSum(statKey) {
   const state = Store.getState();
   let sum = 0;
-  for (const stackKey of Object.values(state.equipped)) {
+  for (const [slotId, stackKey] of Object.entries(state.equipped)) {
     if (!stackKey) continue;
     const item = getScaledItem(stackKey);
     if (item && item.statBonuses[statKey]) {
-      sum += item.statBonuses[statKey];
+      const mult = EnhancementManager.getBonusMultiplier(slotId);
+      sum += item.statBonuses[statKey] * mult;
     }
   }
   return sum;

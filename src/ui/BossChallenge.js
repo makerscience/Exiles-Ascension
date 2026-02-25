@@ -13,18 +13,17 @@ export default class BossChallenge {
     this._unsubs = [];
     this._pulseTween = null;
 
-    const ga = LAYOUT.gameArea;
-    const btnX = ga.x + ga.w / 2;
-    const btnY = ga.y + ga.h - 70;
+    const btnX = LAYOUT.zoneNav.centerX;
+    const btnY = LAYOUT.zoneNav.y + 48;
 
     // Challenge button — hidden by default
     this._btn = scene.add.text(btnX, btnY, 'CHALLENGE BOSS', {
       fontFamily: 'monospace',
-      fontSize: '16px',
+      fontSize: '13px',
       color: '#ffffff',
       fontStyle: 'bold',
       backgroundColor: '#7c2d12',
-      padding: { x: 20, y: 10 },
+      padding: { x: 10, y: 6 },
       stroke: '#000000',
       strokeThickness: 2,
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });

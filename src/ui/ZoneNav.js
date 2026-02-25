@@ -110,7 +110,8 @@ export default class ZoneNav {
       this.bossProgressText.setText('\u2714 Boss Cleared');
       this.bossProgressText.setStyle({ color: '#22c55e', stroke: '#000000', strokeThickness: 3 });
     } else if (bossProgress.ratio >= 1) {
-      this.bossProgressText.setText('\u2605 Boss Ready!');
+      // Challenge button now occupies this line when ready.
+      this.bossProgressText.setText('');
       this.bossProgressText.setStyle({ color: '#eab308', stroke: '#000000', strokeThickness: 3 });
     } else {
       this.bossProgressText.setText(`Kills: ${bossProgress.kills}/${bossProgress.threshold}`);

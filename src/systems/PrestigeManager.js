@@ -76,10 +76,12 @@ const PrestigeManager = {
     Store.resetPlayerStats();
     Store.resetPlayerHp();
     Store.resetPurchasedUpgrades();
+    Store.resetSkillPoints();
     Store.resetTotalKills();
     // Keeps: equipped, inventoryStacks, glitchFragments, unlockedCheats, activeCheats, titles, flags
     // Keeps: killsPerEnemy, territories (permanent progression)
     // Keeps: furthestArea (permanent high-water mark)
+    // Keeps: enhancementLevels (permanent gold investment)
 
     justPrestiged = true;
     emit(EVENTS.PRESTIGE_PERFORMED, { count: Store.getState().prestigeCount });

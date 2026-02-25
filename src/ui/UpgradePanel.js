@@ -20,7 +20,7 @@ export default class UpgradePanel extends ModalPanel {
       width: PANEL_W,
       height: PANEL_H,
       hotkey: 'U',
-      buttonLabel: 'UPGRADES [U]',
+      buttonLabel: 'SKILLS [U]',
       buttonX: 480 + 80,
       buttonColor: '#ffffff',
     });
@@ -28,10 +28,10 @@ export default class UpgradePanel extends ModalPanel {
     this._lastFailedPurchaseTime = 0;
   }
 
-  _getTitle() { return 'UPGRADES'; }
+  _getTitle() { return 'SKILLS'; }
 
   _getEvents() {
-    return [EVENTS.UPG_PURCHASED, EVENTS.STATE_CHANGED, EVENTS.SAVE_LOADED];
+    return [EVENTS.UPG_PURCHASED, EVENTS.PROG_LEVEL_UP, EVENTS.STATE_CHANGED, EVENTS.SAVE_LOADED];
   }
 
   _createStaticContent() {
@@ -55,6 +55,10 @@ export default class UpgradePanel extends ModalPanel {
 
   _buildContent() {
     const state = Store.getState();
+    const pointsText = this.scene.add.text(this._cx, this._cy - PANEL_H / 2 + 24, `Skill Points: ${state.skillPoints || 0}`, {
+      fontFamily: 'monospace', fontSize: '13px', color: '#22c55e', fontStyle: 'bold',
+    }).setOrigin(0.5, 0);
+    this._dynamicObjects.push(pointsText);
 
     // Render legit upgrades (left column)
     this._renderColumn(getUpgradesByCategory('legit'), this._cx - PANEL_W / 2 + 20, state);
@@ -90,8 +94,9 @@ export default class UpgradePanel extends ModalPanel {
       this._dynamicObjects.push(descText);
 
       if (!isMaxed) {
-        const currLabel = upgrade.currency === 'gold' ? 'Gold' : 'Fragments';
-        const costStr = `${cost} ${currLabel}`;
+        let costStr = `${cost} Fragments`;
+        if (upgrade.currency === 'gold') costStr = `${cost} Gold`;
+        if (upgrade.currency === 'skillPoints') costStr = `${cost} SP`;
         const buyColor = canBuy ? '#22c55e' : '#555555';
         const buyBg = canBuy ? '#333333' : '#222222';
 

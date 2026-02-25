@@ -64,7 +64,7 @@ export default class SmashButton {
   }
 
   _getCooldownMs() {
-    return 60000 * (1 - (UpgradeManager.getMultiplier('powerSmashCooldown') - 1));
+    return 30000 * (1 - (UpgradeManager.getMultiplier('powerSmashCooldown') - 1));
   }
 
   _refreshVisibility() {
