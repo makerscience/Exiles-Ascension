@@ -15,11 +15,11 @@ const DUMP_PATH = path.join(__dirname, 'dump-zone-data.mjs');
 const PORT = 3001;
 
 const AREA_MAP = [
-  { id: 1, name: 'The Harsh Threshold', zones: [1, 10] },
-  { id: 2, name: 'The Overgrown Frontier', zones: [11, 15] },
-  { id: 3, name: 'The Broken Road', zones: [16, 30] },
+  { id: 1, name: 'The Whispering Woods', zones: [1, 10] },
+  { id: 2, name: 'The Blighted Mire', zones: [11, 20] },
+  { id: 3, name: 'The Shattered Ruins', zones: [21, 35] },
 ];
-const TOTAL_ZONES = 30;
+const TOTAL_ZONES = 35;
 
 function parseZoneBalance(fileText) {
   const out = {};
@@ -112,14 +112,104 @@ export function getBossBias(bossId, stat) {
 `;
 }
 
+function replaceOrAppend(src, mapName, block) {
+  const re = new RegExp(`export const ${mapName} = \\{[\\s\\S]*?\\n\\};`);
+  return re.test(src) ? src.replace(re, block) : `${src}\n${block}\n`;
+}
+
 function saveEntityBalance(enemyBalance, bossBalance) {
   let text = fs.existsSync(BALANCE_PATH) ? fs.readFileSync(BALANCE_PATH, 'utf8') : scaffoldBalanceFile();
-  const replaceOrAppend = (src, mapName, block) => {
-    const re = new RegExp(`export const ${mapName} = \\{[\\s\\S]*?\\n\\};`);
-    return re.test(src) ? src.replace(re, block) : `${src}\n${block}\n`;
-  };
   text = replaceOrAppend(text, 'ENEMY_BALANCE', formatEntityBalance(enemyBalance, 'ENEMY_BALANCE'));
   text = replaceOrAppend(text, 'BOSS_BALANCE', formatEntityBalance(bossBalance, 'BOSS_BALANCE'));
+  fs.writeFileSync(BALANCE_PATH, text, 'utf8');
+}
+
+// ── Player balance parse / format / save ──────────────────────────
+
+function parsePlayerBalance(fileText) {
+  const out = { xpBias: {}, statGrowthBias: {}, xpBase: {}, xpOverride: {}, statGrowthOverride: {} };
+  const m = fileText.match(/export const PLAYER_BALANCE = \{([\s\S]*?)\n\};/);
+  if (!m) return out;
+  // Parse xpBias sub-object
+  const xpM = m[1].match(/xpBias:\s*\{([^}]*)\}/);
+  if (xpM) {
+    const kvRe = /(\d+):\s*([+-]?\d+(?:\.\d+)?)/g;
+    let kv;
+    while ((kv = kvRe.exec(xpM[1])) !== null) out.xpBias[parseInt(kv[1], 10)] = parseFloat(kv[2]);
+  }
+  // Parse xpBase sub-object
+  const xbM = m[1].match(/xpBase:\s*\{([^}]*)\}/);
+  if (xbM) {
+    const kvRe = /(\d+):\s*([+-]?\d+(?:\.\d+)?)/g;
+    let kv;
+    while ((kv = kvRe.exec(xbM[1])) !== null) out.xpBase[parseInt(kv[1], 10)] = parseFloat(kv[2]);
+  }
+  // Parse statGrowthBias sub-object
+  const sgM = m[1].match(/statGrowthBias:\s*\{([^}]*)\}/);
+  if (sgM) {
+    const kvRe = /(\w+):\s*([+-]?\d+(?:\.\d+)?)/g;
+    let kv;
+    while ((kv = kvRe.exec(sgM[1])) !== null) out.statGrowthBias[kv[1]] = parseFloat(kv[2]);
+  }
+  // Parse xpOverride sub-object
+  const xoM = m[1].match(/xpOverride:\s*\{([^}]*)\}/);
+  if (xoM) {
+    const kvRe = /(\d+):\s*([+-]?\d+(?:\.\d+)?)/g;
+    let kv;
+    while ((kv = kvRe.exec(xoM[1])) !== null) out.xpOverride[parseInt(kv[1], 10)] = parseFloat(kv[2]);
+  }
+  // Parse statGrowthOverride sub-object
+  const soM = m[1].match(/statGrowthOverride:\s*\{([^}]*)\}/);
+  if (soM) {
+    const kvRe = /(\w+):\s*([+-]?\d+(?:\.\d+)?)/g;
+    let kv;
+    while ((kv = kvRe.exec(soM[1])) !== null) out.statGrowthOverride[kv[1]] = parseFloat(kv[2]);
+  }
+  return out;
+}
+
+function formatPlayerBalance(pb) {
+  // Format xpBias
+  const xpKeys = Object.keys(pb.xpBias || {}).map(Number).sort((a, b) => a - b);
+  const xpEntries = xpKeys
+    .filter(k => Math.abs((pb.xpBias[k] ?? 1) - 1) > 0.0001)
+    .map(k => `${k}: ${parseFloat(pb.xpBias[k].toFixed(2))}`);
+  const xpLine = xpEntries.length ? `{ ${xpEntries.join(', ')} }` : '{}';
+
+  // Format xpBase (absolute base XP by level)
+  const xbKeys = Object.keys(pb.xpBase || {}).map(Number).sort((a, b) => a - b);
+  const xbEntries = xbKeys
+    .filter(k => Number.isFinite(pb.xpBase[k]) && pb.xpBase[k] > 0)
+    .map(k => `${k}: ${Math.floor(pb.xpBase[k])}`);
+  const xbLine = xbEntries.length ? `{ ${xbEntries.join(', ')} }` : '{}';
+
+  // Format statGrowthBias
+  const sgKeys = Object.keys(pb.statGrowthBias || {}).sort();
+  const sgEntries = sgKeys
+    .filter(k => Math.abs((pb.statGrowthBias[k] ?? 1) - 1) > 0.0001)
+    .map(k => `${k}: ${parseFloat(pb.statGrowthBias[k].toFixed(2))}`);
+  const sgLine = sgEntries.length ? `{ ${sgEntries.join(', ')} }` : '{}';
+
+  // Format xpOverride (absolute xp required for level)
+  const xoKeys = Object.keys(pb.xpOverride || {}).map(Number).sort((a, b) => a - b);
+  const xoEntries = xoKeys
+    .filter(k => Number.isFinite(pb.xpOverride[k]) && pb.xpOverride[k] > 0)
+    .map(k => `${k}: ${Math.floor(pb.xpOverride[k])}`);
+  const xoLine = xoEntries.length ? `{ ${xoEntries.join(', ')} }` : '{}';
+
+  // Format statGrowthOverride (absolute stat gained per level)
+  const soKeys = Object.keys(pb.statGrowthOverride || {}).sort();
+  const soEntries = soKeys
+    .filter(k => Number.isFinite(pb.statGrowthOverride[k]))
+    .map(k => `${k}: ${parseFloat(pb.statGrowthOverride[k].toFixed(3))}`);
+  const soLine = soEntries.length ? `{ ${soEntries.join(', ')} }` : '{}';
+
+  return `export const PLAYER_BALANCE = {\n  xpBias: ${xpLine},\n  xpBase: ${xbLine},\n  statGrowthBias: ${sgLine},\n  xpOverride: ${xoLine},\n  statGrowthOverride: ${soLine},\n};`;
+}
+
+function savePlayerBalance(pb) {
+  let text = fs.existsSync(BALANCE_PATH) ? fs.readFileSync(BALANCE_PATH, 'utf8') : scaffoldBalanceFile();
+  text = replaceOrAppend(text, 'PLAYER_BALANCE', formatPlayerBalance(pb));
   fs.writeFileSync(BALANCE_PATH, text, 'utf8');
 }
 
@@ -154,6 +244,7 @@ function sendJson(res, data, status = 200) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
+    'Cache-Control': 'no-store',
   });
   res.end(JSON.stringify(data));
 }
@@ -186,6 +277,24 @@ function handleApi(req, res) {
   if (req.method === 'POST' && req.url === '/api/save-balance') {
     readBody(req).then((b) => {
       saveEntityBalance(b.enemyBalance || {}, b.bossBalance || {});
+      sendJson(res, { ok: true });
+    }).catch((e) => sendJson(res, { ok: false, error: e.message }, 400));
+    return;
+  }
+  if (req.method === 'GET' && req.url === '/api/player-data') {
+    const text = fs.existsSync(BALANCE_PATH) ? fs.readFileSync(BALANCE_PATH, 'utf8') : '';
+    sendJson(res, { playerBalance: parsePlayerBalance(text) });
+    return;
+  }
+  if (req.method === 'POST' && req.url === '/api/save-player') {
+    readBody(req).then((b) => {
+      savePlayerBalance(b.playerBalance || {
+        xpBias: {},
+        xpBase: {},
+        statGrowthBias: {},
+        xpOverride: {},
+        statGrowthOverride: {},
+      });
       sendJson(res, { ok: true });
     }).catch((e) => sendJson(res, { ok: false, error: e.message }, 400));
     return;
@@ -242,43 +351,359 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 input[type=range]::-moz-range-thumb{width:11px;height:11px;border-radius:50%;background:#d0d0d0;border:1px solid #888}
 .read{font-size:10px;color:#bbb;cursor:pointer}.read:hover{color:#fff;text-decoration:underline}
 .in{width:52px;padding:1px 3px;background:#0f0f1a;color:#ddd;border:1px solid #52b788;border-radius:2px;text-align:center;font:11px monospace}
+.lv-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 6px}
+.lv-tools label{display:inline-flex;align-items:center;gap:4px}
+.lv-tools .in{width:64px}
+.lv-focus-range{width:180px}
+.lv-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:6px;margin:4px 0 8px}
+.lv-card{background:#0f1a2e;border:1px solid #0f3460;border-radius:3px;padding:4px 6px}
+.lv-card .k{display:block;font-size:9px;color:#7a9cc5}
+.lv-card .v{display:block;font-size:12px;color:#ddd}
+#lvtable tbody tr{cursor:pointer}
+#lvtable tbody tr.focus td{background:#203148}
 .mini,.elite,.area{font-size:9px;padding:1px 5px;border-radius:2px}.mini{background:#303030;color:#999}.elite{background:#2e2810;color:#d4a830}.area{background:#2e1010;color:#d46060}
 #sim{display:none;background:#0a0a1a;border-top:2px solid #0f3460;padding:10px 12px}#sim pre{white-space:pre;max-height:500px;overflow:auto}
 </style></head><body>
 <header><h1>Balance Dials</h1><button id="save">Save to areas.js</button><button id="simbtn">Run Sim</button><button id="copy">Copy Code</button><div id="rates" class="rates">Loading...</div></header>
-<div class="tabs"><button class="tab-btn active" data-tab="zones">Zones</button><button class="tab-btn" data-tab="enemies">Enemies</button><button class="tab-btn" data-tab="bosses">Bosses</button></div>
+<div class="tabs"><button class="tab-btn active" data-tab="zones">Zones</button><button class="tab-btn" data-tab="enemies">Enemies</button><button class="tab-btn" data-tab="bosses">Bosses</button><button class="tab-btn" data-tab="player">Player</button></div>
 <div id="zones" class="tab-panel active"><div id="sparks" class="sparks"></div><div class="wrap"><table><thead><tr><th>Zone</th><th>Area</th><th>hp</th><th>atk</th><th>def</th><th>speed</th><th>regen</th><th>gold</th><th>xp</th></tr></thead><tbody id="zbody"></tbody></table></div></div>
-<div id="enemies" class="tab-panel"><div class="wrap"><table><thead><tr><th>Name</th><th>Zones</th><th>hp</th><th>atk</th><th>def</th><th>speed</th><th>regen</th><th>gold</th><th>xp</th></tr></thead><tbody id="ebody"></tbody></table></div></div>
+<div id="enemies" class="tab-panel"><div class="wrap"><table><thead><tr><th>Name</th><th>Zones</th><th>hp</th><th>atk</th><th>def</th><th>speed</th><th>regen</th><th>gold</th><th>Base XP</th><th>XP Value</th><th>XP Bias</th></tr></thead><tbody id="ebody"></tbody></table></div></div>
 <div id="bosses" class="tab-panel"><div class="wrap"><table><thead><tr><th>Name</th><th>Zone</th><th>Type</th><th>hp</th><th>atk</th><th>def</th><th>speed</th><th>regen</th><th>gold</th><th>xp</th></tr></thead><tbody id="bbody"></tbody></table></div></div>
+<div id="player" class="tab-panel"><div class="wrap"><h3 style="color:#e94560;margin:8px 0 4px">Stat Growth per Level</h3><div class="meta" style="margin-bottom:4px">Set a Bias multiplier and/or an exact Override value. Override takes priority.</div><table><thead><tr><th>Stat</th><th>Base</th><th>Bias</th><th>Override</th><th>Effective</th></tr></thead><tbody id="sgbody"></tbody></table><h3 style="color:#e94560;margin:12px 0 4px">XP per Level</h3><div class="meta" style="margin-bottom:4px">Edit Base XP directly per level. Bias multiplies the (possibly edited) base. Override XP forces an exact effective value.</div><label class="meta" style="display:inline-flex;align-items:center;gap:6px;margin:2px 0 6px"><input id="xpCascade" type="checkbox" checked> Cascade XP edits forward (base + override)</label><table><thead><tr><th>Lvl</th><th>Base XP</th><th>Bias</th><th>Override XP</th><th>Effective</th><th>Cumulative</th><th>Growth %</th></tr></thead><tbody id="xpbody"></tbody></table><h3 style="color:#e94560;margin:12px 0 4px">Level Inspector</h3><div class="meta" style="margin-bottom:4px">Live preview of player stats based on current growth + XP settings. Use controls or click rows.</div><div class="lv-tools"><label class="meta">Focus Lv <input id="lvFocus" class="in" type="number" min="1" step="1" value="1"></label><input id="lvFocusRange" class="lv-focus-range" type="range" min="1" max="35" step="1" value="1"><label class="meta">Preview To Lv <input id="lvMax" class="in" type="number" min="1" max="120" step="1" value="35"></label></div><div id="lvCards" class="lv-cards"></div><table id="lvtable"><thead><tr><th>Lv</th><th>STR</th><th>DEF</th><th>HP</th><th>REGEN/s</th><th>AGI</th><th>Evade</th><th>XP To Next</th><th>Total XP To Reach</th></tr></thead><tbody id="lvbody"></tbody></table></div></div>
 <div id="sim"><h3>Sim Output</h3><pre id="simout"></pre></div>
 <script>
 var STATS=['hp','atk','def','speed','regen','gold','xp'],TOTAL_ZONES=${TOTAL_ZONES},AREA_MAP=${AREAS_JSON},SPW=120,SPH=44,SPC=22,SPM=18;
-var balance={},enemyBalance={},bossBalance={},entityData={enemies:[],bosses:[]},active='zones',cellRefs={};
+var balance={},enemyBalance={},bossBalance={},playerBalance={xpBias:{},xpBase:{},statGrowthBias:{},xpOverride:{},statGrowthOverride:{}},entityData={enemies:[],bosses:[]},active='zones',cellRefs={};
+var BASE_XP_TABLE=[50,75,110,155,210,280,360,450,560,680,820,980,1160,1360,1580,1830,2100,2400,2750,3120,3530,3980,4480,5020,5620,6280,7000,7800,8680,9640,10700,11870,13150,14560,16100];
+var BASE_STAT_GROWTH={str:2,def:2,hp:12,regen:0.1,agi:0.5};
+var PLAYER_STATS=['str','def','hp','regen','agi'];
+var STARTING_PLAYER_STATS={str:10,def:5,hp:100,regen:1,agi:3};
+var playerPreview={focus:1,max:35};
+var CELL_SLIDER_MIN=-4.00,CELL_SLIDER_MAX=6.00,CELL_SLIDER_STEP=0.01;
+function clampBias(v){return Math.max(CELL_SLIDER_MIN,Math.min(CELL_SLIDER_MAX,v))}
+var xpOverrideInputs={},xpBaseInputs={},enemyXpValueInputs={},enemyAbsInputs={};
+var ENEMY_ABS_STATS=['hp','atk','def','speed','regen','gold'];
 function areaForZone(z){for(var i=0;i<AREA_MAP.length;i++)if(z>=AREA_MAP[i].zones[0]&&z<=AREA_MAP[i].zones[1])return AREA_MAP[i];return AREA_MAP[0]}
 function gv(z,s){return balance[z]&&balance[z][s]!==undefined?balance[z][s]:1}function sv(z,s,v){if(!balance[z])balance[z]={};balance[z][s]=v}
 function gev(m,id,s){return m[id]&&m[id][s]!==undefined?m[id][s]:1}function sev(m,id,s,v){if(!m[id])m[id]={};m[id][s]=v}
 function bg(td,v){if(Math.abs(v-1)<0.001){td.style.background='';return}var a=Math.min(0.45,Math.abs(v-1)*0.9);td.style.background=v<1?'rgba(231,111,81,'+a.toFixed(3)+')':'rgba(82,183,136,'+a.toFixed(3)+')'}
-function track(sl,v){var pct=Math.max(0,Math.min(100,((v-0.5)/1.5)*100)),fill=v<1?'#e76f51':'#52b788';sl.style.background='linear-gradient(to right,'+fill+' 0%,'+fill+' '+pct.toFixed(1)+'%,#333 '+pct.toFixed(1)+'%,#333 100%)'}
-function mkCell(tr,key,getf,setf,onchg){var td=document.createElement('td');td.className='stat';var inner=document.createElement('div');inner.className='cell';var sl=document.createElement('input');sl.type='range';sl.min='0.5';sl.max='2.0';sl.step='0.05';var sp=document.createElement('span');sp.className='read';function apply(v){sl.value=v;track(sl,v);sp.textContent='x'+v.toFixed(2);bg(td,v)}apply(getf());cellRefs[key]={slider:sl,span:sp,td:td};sl.addEventListener('input',function(){var v=parseFloat(this.value);if(isNaN(v))return;setf(v);apply(v);if(onchg)onchg()});sp.addEventListener('click',function(){var ni=document.createElement('input');ni.type='number';ni.min='0.05';ni.max='5';ni.step='0.05';ni.value=getf().toFixed(2);ni.className='in';inner.replaceChild(ni,sp);ni.focus();ni.select();var done=false;function commit(){if(done)return;done=true;var v=parseFloat(ni.value);if(!isNaN(v)&&v>0)setf(v);if(ni.parentNode)inner.replaceChild(sp,ni);apply(getf());if(onchg)onchg()}ni.addEventListener('blur',commit);ni.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();commit()}if(e.key==='Escape'&&!done){done=true;inner.replaceChild(sp,ni)}})});inner.appendChild(sl);inner.appendChild(sp);td.appendChild(inner);tr.appendChild(td)}
+function track(sl,v){var span=CELL_SLIDER_MAX-CELL_SLIDER_MIN,pct=Math.max(0,Math.min(100,((v-CELL_SLIDER_MIN)/(span<=0?1:span))*100)),fill=v<1?'#e76f51':'#52b788';sl.style.background='linear-gradient(to right,'+fill+' 0%,'+fill+' '+pct.toFixed(1)+'%,#333 '+pct.toFixed(1)+'%,#333 100%)'}
+function mkCell(tr,key,getf,setf,onchg){var td=document.createElement('td');td.className='stat';var inner=document.createElement('div');inner.className='cell';var sl=document.createElement('input');sl.type='range';sl.min=String(CELL_SLIDER_MIN);sl.max=String(CELL_SLIDER_MAX);sl.step=String(CELL_SLIDER_STEP);var sp=document.createElement('span');sp.className='read';function apply(v){sl.value=v;track(sl,v);sp.textContent='x'+v.toFixed(2);bg(td,v)}apply(getf());cellRefs[key]={slider:sl,span:sp,td:td};sl.addEventListener('input',function(){var v=parseFloat(this.value);if(isNaN(v))return;var c=clampBias(v);setf(c);apply(c);if(onchg)onchg()});sp.addEventListener('click',function(){var ni=document.createElement('input');ni.type='number';ni.min=String(CELL_SLIDER_MIN);ni.max=String(CELL_SLIDER_MAX);ni.step=String(CELL_SLIDER_STEP);ni.value=getf().toFixed(2);ni.className='in';inner.replaceChild(ni,sp);ni.focus();ni.select();var done=false;function commit(){if(done)return;done=true;var v=parseFloat(ni.value);if(!isNaN(v))setf(clampBias(v));if(ni.parentNode)inner.replaceChild(sp,ni);apply(getf());if(onchg)onchg()}ni.addEventListener('blur',commit);ni.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();commit()}if(e.key==='Escape'&&!done){done=true;inner.replaceChild(sp,ni)}})});inner.appendChild(sl);inner.appendChild(sp);td.appendChild(inner);tr.appendChild(td)}
 function refreshCell(k,v){var r=cellRefs[k];if(!r)return;r.slider.value=v;track(r.slider,v);r.span.textContent='x'+v.toFixed(2);bg(r.td,v)}
 function spark(stat){var svg=document.getElementById('sp-'+stat);if(!svg)return;var bw=SPW/TOTAL_ZONES,html='<line x1="0" y1="'+SPC+'" x2="'+SPW+'" y2="'+SPC+'" stroke="#444" stroke-width="1"/>';for(var z=1;z<=TOTAL_ZONES;z++){var v=gv(z,stat);if(Math.abs(v-1)<0.001)continue;var h=Math.max(1,Math.min(SPM,Math.abs(v-1)*SPM*2)),c=v>=1?'#52b788':'#e76f51',x=((z-1)*bw).toFixed(1),y=(v>=1?SPC-h:SPC).toFixed(1);html+='<rect class="sb" data-zone="'+z+'" x="'+x+'" y="'+y+'" width="'+Math.max(1,bw-0.5).toFixed(1)+'" height="'+h.toFixed(1)+'" fill="'+c+'"/>'}svg.innerHTML=html;svg.querySelectorAll('.sb').forEach(function(r){r.addEventListener('click',function(){var z=parseInt(r.dataset.zone,10),tr=document.querySelector('tr[data-zone="'+z+'"]');if(!tr)return;tr.scrollIntoView({behavior:'smooth',block:'center'});tr.classList.remove('hl');void tr.offsetWidth;tr.classList.add('hl');setTimeout(function(){tr.classList.remove('hl')},1300)})})}
 function buildSparks(){var c=document.getElementById('sparks');c.innerHTML='';STATS.forEach(function(s){var w=document.createElement('div');w.className='spark';var l=document.createElement('span');l.textContent=s;var svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.id='sp-'+s;svg.setAttribute('width',SPW);svg.setAttribute('height',SPH);w.appendChild(l);w.appendChild(svg);c.appendChild(w);spark(s)})}
 function resetZone(z){for(var i=0;i<STATS.length;i++){var s=STATS[i];sv(z,s,1);refreshCell(z+'-'+s,1);spark(s)}}
 function resetEnt(p,id,map){for(var i=0;i<STATS.length;i++){var s=STATS[i];sev(map,id,s,1);refreshCell(p+'-'+id+'-'+s,1)}}
-function buildZones(){var tb=document.getElementById('zbody');tb.innerHTML='';var last=null;for(var z=1;z<=TOTAL_ZONES;z++){var a=areaForZone(z);if(a.id!==last){last=a.id;var hr=document.createElement('tr');hr.className='areahead';var hc=document.createElement('td');hc.colSpan=9;hc.textContent='A'+a.id+' - '+a.name+' (zones '+a.zones[0]+'-'+a.zones[1]+')';hr.appendChild(hc);tb.appendChild(hr)}var tr=document.createElement('tr');tr.dataset.zone=z;tr.addEventListener('dblclick',(function(zz){return function(){resetZone(zz)}})(z));tr.addEventListener('contextmenu',(function(zz){return function(e){e.preventDefault();resetZone(zz)}})(z));var zc=document.createElement('td');zc.className='zone';zc.textContent=z;tr.appendChild(zc);var ac=document.createElement('td');ac.className='meta';ac.textContent='A'+a.id;tr.appendChild(ac);STATS.forEach(function(s){mkCell(tr,z+'-'+s,function(){return gv(z,s)},function(v){sv(z,s,v)},function(){spark(s)})});tb.appendChild(tr)}}
-function buildEnemies(){var tb=document.getElementById('ebody');tb.innerHTML='';(entityData.enemies||[]).forEach(function(e){var tr=document.createElement('tr');tr.addEventListener('dblclick',function(){resetEnt('e',e.id,enemyBalance)});tr.addEventListener('contextmenu',function(ev){ev.preventDefault();resetEnt('e',e.id,enemyBalance)});var n=document.createElement('td');n.className='name';n.textContent=e.name;tr.appendChild(n);var z=document.createElement('td');z.className='meta';z.textContent=e.zones[0]+'-'+e.zones[1];tr.appendChild(z);STATS.forEach(function(s){mkCell(tr,'e-'+e.id+'-'+s,function(){return gev(enemyBalance,e.id,s)},function(v){sev(enemyBalance,e.id,s,v)})});tb.appendChild(tr)})}
+function enemyAbsKey(id,stat){return id+':'+stat}
+function enemyBaseStat(enemy,stat){
+  if(stat==='hp') return Number(enemy&&enemy.hp)||0;
+  if(stat==='atk') return Number(enemy&&enemy.attack)||0;
+  if(stat==='def') return Number(enemy&&enemy.defense)||0;
+  if(stat==='speed') return Number(enemy&&enemy.attackSpeed)||0;
+  if(stat==='regen') return Number(enemy&&enemy.regen)||0;
+  if(stat==='gold') return Number(enemy&&enemy.goldDrop)||0;
+  if(stat==='xp') return Number(enemy&&enemy.xpDrop)||0;
+  return 0;
+}
+function enemyStatValue(enemy,id,stat){
+  var base=enemyBaseStat(enemy,stat),bias=gev(enemyBalance,id,stat),raw=base*bias;
+  if(stat==='speed') return raw;
+  return Math.floor(raw);
+}
+function refreshEnemyAbsInput(id,stat){
+  var slot=enemyAbsInputs[enemyAbsKey(id,stat)];
+  if(!slot)return;
+  var base=enemyBaseStat(slot.enemy,stat);
+  if(stat==='speed'){
+    slot.input.disabled=!(base>0);
+    slot.input.value=(base>0?enemyStatValue(slot.enemy,id,stat):0).toFixed(2);
+    return;
+  }
+  slot.input.disabled=(base===0);
+  slot.input.value=String(base!==0?enemyStatValue(slot.enemy,id,stat):0);
+}
+function applyEnemyAbsInput(id,stat){
+  var slot=enemyAbsInputs[enemyAbsKey(id,stat)];
+  if(!slot)return;
+  var key='e-'+id+'-'+stat,base=enemyBaseStat(slot.enemy,stat);
+  if((stat==='speed'&&base<=0)||(stat!=='speed'&&base===0)){sev(enemyBalance,id,stat,1);refreshCell(key,1);refreshEnemyAbsInput(id,stat);return}
+  var raw=(slot.input.value||'').trim();
+  if(!raw){sev(enemyBalance,id,stat,1);refreshCell(key,1);refreshEnemyAbsInput(id,stat);return}
+  var parsed=parseFloat(raw);
+  if(!Number.isFinite(parsed)){refreshEnemyAbsInput(id,stat);return}
+  var target=stat==='speed'?parsed:Math.floor(parsed);
+  var ratio=clampBias(target/base);
+  if(!Number.isFinite(ratio)){refreshEnemyAbsInput(id,stat);return}
+  sev(enemyBalance,id,stat,ratio);
+  refreshCell(key,ratio);
+  refreshEnemyAbsInput(id,stat);
+}
+function mkEnemyStatCell(tr,enemy,stat){
+  var id=enemy.id,key='e-'+id+'-'+stat;
+  mkCell(tr,key,function(){return gev(enemyBalance,id,stat)},function(v){sev(enemyBalance,id,stat,v)},function(){refreshEnemyAbsInput(id,stat)});
+  var td=tr.lastChild,inner=td.querySelector('.cell');
+  var absIn=document.createElement('input');
+  absIn.type='number';
+  absIn.step=stat==='speed'?'0.01':'1';
+  absIn.className='in';
+  absIn.style.width='62px';
+  absIn.title='Absolute value';
+  inner.appendChild(absIn);
+  enemyAbsInputs[enemyAbsKey(id,stat)]={input:absIn,enemy:enemy};
+  refreshEnemyAbsInput(id,stat);
+  absIn.addEventListener('change',function(){applyEnemyAbsInput(id,stat)});
+  absIn.addEventListener('blur',function(){applyEnemyAbsInput(id,stat)});
+}
+function enemyBaseXp(enemy){var xp=Math.floor(Number(enemy&&enemy.xpDrop));return Number.isFinite(xp)&&xp>0?xp:0}
+function refreshEnemyXpValueInput(id){var slot=enemyXpValueInputs[id];if(!slot)return;var base=slot.base;if(base<=0){slot.input.value='0';return}slot.input.value=String(Math.round(base*gev(enemyBalance,id,'xp')))}
+function buildZones(){var tb=document.getElementById('zbody');tb.innerHTML='';var last=null;for(var z=1;z<=TOTAL_ZONES;z++){var a=areaForZone(z);if(a.id!==last){last=a.id;var hr=document.createElement('tr');hr.className='areahead';var hc=document.createElement('td');hc.colSpan=9;hc.textContent='A'+a.id+' - '+a.name+' (zones '+a.zones[0]+'-'+a.zones[1]+')';hr.appendChild(hc);tb.appendChild(hr)}var tr=document.createElement('tr');tr.dataset.zone=z;tr.addEventListener('dblclick',(function(zz){return function(){resetZone(zz)}})(z));tr.addEventListener('contextmenu',(function(zz){return function(e){e.preventDefault();resetZone(zz)}})(z));var zc=document.createElement('td');zc.className='zone';zc.textContent=z;tr.appendChild(zc);var ac=document.createElement('td');ac.className='meta';ac.textContent='A'+a.id;tr.appendChild(ac);(function(zz){STATS.forEach(function(s){mkCell(tr,zz+'-'+s,function(){return gv(zz,s)},function(v){sv(zz,s,v)},function(){spark(s)})})})(z);tb.appendChild(tr)}}
+function buildEnemies(){
+  var tb=document.getElementById('ebody');tb.innerHTML='';enemyXpValueInputs={};enemyAbsInputs={};
+  (entityData.enemies||[]).forEach(function(e){
+    var tr=document.createElement('tr');
+    tr.addEventListener('dblclick',function(){resetEnt('e',e.id,enemyBalance);ENEMY_ABS_STATS.forEach(function(s){refreshEnemyAbsInput(e.id,s)});refreshEnemyXpValueInput(e.id)});
+    tr.addEventListener('contextmenu',function(ev){ev.preventDefault();resetEnt('e',e.id,enemyBalance);ENEMY_ABS_STATS.forEach(function(s){refreshEnemyAbsInput(e.id,s)});refreshEnemyXpValueInput(e.id)});
+    var n=document.createElement('td');n.className='name';n.textContent=e.name;tr.appendChild(n);
+    var z=document.createElement('td');z.className='meta';z.textContent=e.zones[0]+'-'+e.zones[1];tr.appendChild(z);
+    ['hp','atk','def','speed','regen','gold'].forEach(function(s){mkEnemyStatCell(tr,e,s)});
+    var baseXp=enemyBaseXp(e);
+    var bc=document.createElement('td');bc.className='meta';bc.textContent=baseXp>0?String(baseXp):'-';tr.appendChild(bc);
+    var vc=document.createElement('td');
+    var vi=document.createElement('input');vi.type='number';vi.step='1';vi.className='in';vi.style.width='78px';
+    enemyXpValueInputs[e.id]={input:vi,base:baseXp};
+    refreshEnemyXpValueInput(e.id);
+    function applyXpValue(){
+      if(baseXp<=0){sev(enemyBalance,e.id,'xp',1);refreshCell('e-'+e.id+'-xp',1);refreshEnemyXpValueInput(e.id);return}
+      var raw=(vi.value||'').trim();
+      var parsed=Math.floor(parseFloat(raw));
+      if(!raw||!Number.isFinite(parsed)){sev(enemyBalance,e.id,'xp',1);refreshCell('e-'+e.id+'-xp',1);refreshEnemyXpValueInput(e.id);return}
+      var nextBias=clampBias(parsed/baseXp);
+      sev(enemyBalance,e.id,'xp',nextBias);
+      refreshCell('e-'+e.id+'-xp',nextBias);
+      refreshEnemyXpValueInput(e.id);
+    }
+    vi.addEventListener('change',applyXpValue);
+    vi.addEventListener('blur',applyXpValue);
+    vc.appendChild(vi);
+    tr.appendChild(vc);
+    mkCell(tr,'e-'+e.id+'-xp',function(){return gev(enemyBalance,e.id,'xp')},function(v){sev(enemyBalance,e.id,'xp',v)},function(){refreshEnemyXpValueInput(e.id)});
+    tb.appendChild(tr);
+  });
+}
 function cls(t){if(t==='AREA')return'area';if(t==='ELITE')return'elite';return'mini'}
 function buildBosses(){var tb=document.getElementById('bbody');tb.innerHTML='';(entityData.bosses||[]).forEach(function(b){var tr=document.createElement('tr');tr.addEventListener('dblclick',function(){resetEnt('b',b.id,bossBalance)});tr.addEventListener('contextmenu',function(ev){ev.preventDefault();resetEnt('b',b.id,bossBalance)});var n=document.createElement('td');n.className='name';n.textContent=b.name;tr.appendChild(n);var z=document.createElement('td');z.className='meta';z.textContent=String(b.zone);tr.appendChild(z);var t=document.createElement('td');t.className='meta';var badge=document.createElement('span');badge.className=cls(b.bossType);badge.textContent=b.bossType;t.appendChild(badge);tr.appendChild(t);STATS.forEach(function(s){mkCell(tr,'b-'+b.id+'-'+s,function(){return gev(bossBalance,b.id,s)},function(v){sev(bossBalance,b.id,s,v)})});tb.appendChild(tr)})}
+function xpBiasForLevel(lv){return playerBalance.xpBias[lv]!==undefined?playerBalance.xpBias[lv]:1}
+function xpBaseForLevel(lv){var v=playerBalance.xpBase&&playerBalance.xpBase[lv];if(Number.isFinite(v)){var n=Math.floor(v);if(n>0)return n}return BASE_XP_TABLE[lv-1]}
+function xpOverrideForLevel(lv){var v=playerBalance.xpOverride&&playerBalance.xpOverride[lv];if(!Number.isFinite(v))return null;var n=Math.floor(v);return n>0?n:null}
+function effectiveXpForLevel(lv){var ov=xpOverrideForLevel(lv);if(ov!==null)return ov;return Math.floor(xpBaseForLevel(lv)*xpBiasForLevel(lv))}
+function statGrowthBiasFor(stat){return playerBalance.statGrowthBias[stat]!==undefined?playerBalance.statGrowthBias[stat]:1}
+function statGrowthOverrideFor(stat){var v=playerBalance.statGrowthOverride&&playerBalance.statGrowthOverride[stat];return Number.isFinite(v)?v:null}
+function effectiveStatGrowth(stat){var ov=statGrowthOverrideFor(stat);if(ov!==null)return ov;return BASE_STAT_GROWTH[stat]*statGrowthBiasFor(stat)}
+function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
+function fmtNum(v,d){if(!Number.isFinite(v))return'-';var pow=Math.pow(10,d||0),n=Math.round(v*pow)/pow;return Math.abs(n-Math.round(n))<0.0001?Math.round(n).toLocaleString('en-US'):n.toLocaleString('en-US',{minimumFractionDigits:d||2,maximumFractionDigits:d||2})}
+function xpBaseForAnyLevel(lv){if(lv<=35)return xpBaseForLevel(lv);return Math.max(1,Math.floor(xpBaseForLevel(35)*(1.1**(lv-35))))}
+function effectiveXpForAnyLevel(lv){var ov=xpOverrideForLevel(lv);if(ov!==null)return ov;return Math.max(1,Math.floor(xpBaseForAnyLevel(lv)*xpBiasForLevel(lv)))}
+function statsAtLevel(lv){var up=Math.max(0,lv-1);return{str:STARTING_PLAYER_STATS.str+up*effectiveStatGrowth('str'),def:STARTING_PLAYER_STATS.def+up*effectiveStatGrowth('def'),hp:STARTING_PLAYER_STATS.hp+up*effectiveStatGrowth('hp'),regen:STARTING_PLAYER_STATS.regen+up*effectiveStatGrowth('regen'),agi:STARTING_PLAYER_STATS.agi+up*effectiveStatGrowth('agi')}}
+function wirePlayerPreviewControls(){
+  var focusIn=document.getElementById('lvFocus'),range=document.getElementById('lvFocusRange'),maxIn=document.getElementById('lvMax');
+  if(!focusIn||!range||!maxIn)return;
+  if(focusIn.dataset.bound==='1')return;
+  focusIn.dataset.bound='1';
+  function syncFromControls(mode){
+    var nextMax=clamp(Math.floor(parseFloat(maxIn.value)||35),1,120);
+    var nextFocus=clamp(Math.floor(parseFloat(mode==='range'?range.value:focusIn.value)||playerPreview.focus||1),1,nextMax);
+    playerPreview.max=nextMax;
+    playerPreview.focus=nextFocus;
+    maxIn.value=String(nextMax);
+    focusIn.value=String(nextFocus);
+    range.max=String(nextMax);
+    range.value=String(nextFocus);
+    recomputePlayerPreview();
+  }
+  focusIn.addEventListener('input',function(){syncFromControls('input')});
+  focusIn.addEventListener('change',function(){syncFromControls('input')});
+  range.addEventListener('input',function(){syncFromControls('range')});
+  range.addEventListener('change',function(){syncFromControls('range')});
+  maxIn.addEventListener('input',function(){syncFromControls('input')});
+  maxIn.addEventListener('change',function(){syncFromControls('input')});
+}
+function recomputePlayerPreview(){
+  var tbody=document.getElementById('lvbody'),cards=document.getElementById('lvCards'),focusIn=document.getElementById('lvFocus'),range=document.getElementById('lvFocusRange'),maxIn=document.getElementById('lvMax');
+  if(!tbody||!cards||!focusIn||!range||!maxIn)return;
+  var maxLevel=clamp(Math.floor(parseFloat(maxIn.value)||playerPreview.max||35),1,120);
+  var focus=clamp(Math.floor(parseFloat(focusIn.value)||playerPreview.focus||1),1,maxLevel);
+  playerPreview.max=maxLevel;playerPreview.focus=focus;
+  maxIn.value=String(maxLevel);focusIn.value=String(focus);range.max=String(maxLevel);range.value=String(focus);
+  var focusedStats=statsAtLevel(focus),toReach=0;
+  for(var lv=1;lv<focus;lv++)toReach+=effectiveXpForAnyLevel(lv);
+  var focusXp=effectiveXpForAnyLevel(focus),evade=focusedStats.agi*2;
+  cards.innerHTML='<div class="lv-card"><span class="k">Focus Level</span><span class="v">'+focus+'</span></div>'
+    +'<div class="lv-card"><span class="k">STR</span><span class="v">'+fmtNum(focusedStats.str,2)+'</span></div>'
+    +'<div class="lv-card"><span class="k">DEF</span><span class="v">'+fmtNum(focusedStats.def,2)+'</span></div>'
+    +'<div class="lv-card"><span class="k">HP</span><span class="v">'+fmtNum(focusedStats.hp,2)+'</span></div>'
+    +'<div class="lv-card"><span class="k">REGEN/s</span><span class="v">'+fmtNum(focusedStats.regen,2)+'</span></div>'
+    +'<div class="lv-card"><span class="k">AGI</span><span class="v">'+fmtNum(focusedStats.agi,2)+'</span></div>'
+    +'<div class="lv-card"><span class="k">Evade Rating</span><span class="v">'+fmtNum(evade,2)+'</span></div>'
+    +'<div class="lv-card"><span class="k">XP To Next</span><span class="v">'+fmtNum(focusXp,0)+'</span></div>'
+    +'<div class="lv-card"><span class="k">Total XP To Reach</span><span class="v">'+fmtNum(toReach,0)+'</span></div>';
+  tbody.innerHTML='';
+  var cumulative=0;
+  for(var i=1;i<=maxLevel;i++){
+    var st=statsAtLevel(i),xpNext=effectiveXpForAnyLevel(i);
+    var tr=document.createElement('tr');
+    if(i===focus)tr.className='focus';
+    tr.addEventListener('click',function(level){return function(){playerPreview.focus=level;focusIn.value=String(level);range.value=String(level);recomputePlayerPreview()}}(i));
+    function td(text,cls){var c=document.createElement('td');if(cls)c.className=cls;c.textContent=text;return c}
+    tr.appendChild(td(String(i),'zone'));
+    tr.appendChild(td(fmtNum(st.str,2),'meta'));
+    tr.appendChild(td(fmtNum(st.def,2),'meta'));
+    tr.appendChild(td(fmtNum(st.hp,2),'meta'));
+    tr.appendChild(td(fmtNum(st.regen,2),'meta'));
+    tr.appendChild(td(fmtNum(st.agi,2),'meta'));
+    tr.appendChild(td(fmtNum(st.agi*2,2),'meta'));
+    tr.appendChild(td(fmtNum(xpNext,0),'meta'));
+    tr.appendChild(td(fmtNum(cumulative,0),'meta'));
+    cumulative+=xpNext;
+    tbody.appendChild(tr);
+  }
+}
+function xpCascadeEnabled(){var cb=document.getElementById('xpCascade');return !!(cb&&cb.checked)}
+function refreshXpBaseInputs(){for(var lv=1;lv<=35;lv++){var input=xpBaseInputs[lv];if(!input)continue;input.value=String(xpBaseForLevel(lv))}}
+function refreshXpOverrideInputs(){for(var lv=1;lv<=35;lv++){var input=xpOverrideInputs[lv];if(!input)continue;var ov=xpOverrideForLevel(lv);input.value=ov!==null?String(ov):''}}
+function applyXpBaseCascade(fromLevel,targetValue){
+  var anchorBase=BASE_XP_TABLE[fromLevel-1];
+  if(anchorBase<=0)return;
+  var ratio=targetValue/anchorBase;
+  for(var lv=fromLevel;lv<=35;lv++){
+    var casc=Math.max(1,Math.floor(BASE_XP_TABLE[lv-1]*ratio));
+    if(casc===BASE_XP_TABLE[lv-1]) delete playerBalance.xpBase[lv];
+    else playerBalance.xpBase[lv]=casc;
+  }
+}
+function applyXpOverrideCascade(fromLevel,targetValue){
+  var anchorBase=xpBaseForLevel(fromLevel);
+  if(anchorBase<=0)return;
+  var ratio=targetValue/anchorBase;
+  for(var lv=fromLevel;lv<=35;lv++){
+    var casc=Math.max(1,Math.floor(xpBaseForLevel(lv)*ratio));
+    var fromBias=Math.floor(xpBaseForLevel(lv)*xpBiasForLevel(lv));
+    if(casc===fromBias) delete playerBalance.xpOverride[lv];
+    else playerBalance.xpOverride[lv]=casc;
+  }
+}
+function recomputeXp(){var cum=0;for(var i=0;i<35;i++){var lv=i+1,eff=effectiveXpForLevel(lv);cum+=eff;var prev=i>0?effectiveXpForLevel(i):0;var growth=prev>0?((eff-prev)/prev*100).toFixed(1)+'%':'-';var row=document.getElementById('xpr-'+lv);if(!row)continue;var effCell=row.querySelector('.xp-eff');effCell.textContent=eff;effCell.style.color=xpOverrideForLevel(lv)!==null?'#7abf7a':'#888';row.querySelector('.xp-cum').textContent=cum;row.querySelector('.xp-grow').textContent=growth}recomputePlayerPreview()}
+function buildPlayer(){
+  var sgb=document.getElementById('sgbody');sgb.innerHTML='';
+  PLAYER_STATS.forEach(function(s){
+    var tr=document.createElement('tr');
+    var n=document.createElement('td');n.className='name';n.style.textAlign='left';n.style.paddingLeft='8px';n.textContent=s;tr.appendChild(n);
+    var b=document.createElement('td');b.className='meta';b.textContent=BASE_STAT_GROWTH[s];tr.appendChild(b);
+    mkCell(tr,'sg-'+s,function(){return statGrowthBiasFor(s)},function(v){playerBalance.statGrowthBias[s]=v},function(){refreshEff();recomputePlayerPreview()});
+    var ov=document.createElement('td');
+    var ovIn=document.createElement('input');ovIn.type='number';ovIn.min='0';ovIn.step='0.01';ovIn.className='in';ovIn.style.width='70px';ovIn.placeholder='auto';
+    var ovVal=statGrowthOverrideFor(s);if(ovVal!==null)ovIn.value=String(ovVal);
+    function applyStatOverride(){
+      var raw=(ovIn.value||'').trim();
+      if(!raw){delete playerBalance.statGrowthOverride[s];refreshEff();recomputePlayerPreview();return;}
+      var v=parseFloat(raw);
+      if(!isNaN(v)&&v>=0){
+        var fromBias=BASE_STAT_GROWTH[s]*statGrowthBiasFor(s);
+        if(Math.abs(v-fromBias)<0.0001) delete playerBalance.statGrowthOverride[s];
+        else playerBalance.statGrowthOverride[s]=parseFloat(v.toFixed(3));
+      }
+      refreshEff();
+      recomputePlayerPreview();
+    }
+    ovIn.addEventListener('change',applyStatOverride);
+    ovIn.addEventListener('blur',applyStatOverride);
+    ov.appendChild(ovIn);
+    tr.appendChild(ov);
+    var e=document.createElement('td');e.className='meta sg-eff';
+    function refreshEff(){var eff=effectiveStatGrowth(s);e.textContent=eff.toFixed(2);e.style.color=statGrowthOverrideFor(s)!==null?'#7abf7a':'#888'}
+    refreshEff();
+    tr.appendChild(e);
+    sgb.appendChild(tr);
+  });
+  var xpb=document.getElementById('xpbody');xpb.innerHTML='';xpOverrideInputs={};xpBaseInputs={};
+  for(var i=0;i<35;i++){
+    var lv=i+1;
+    var tr=document.createElement('tr');tr.id='xpr-'+lv;
+    var lc=document.createElement('td');lc.className='zone';lc.textContent=lv;tr.appendChild(lc);
+    var bc=document.createElement('td');
+    var bcIn=document.createElement('input');bcIn.type='number';bcIn.min='0';bcIn.step='1';bcIn.className='in';bcIn.style.width='78px';bcIn.value=String(xpBaseForLevel(lv));
+    xpBaseInputs[lv]=bcIn;
+    bcIn.addEventListener('change',function(level,input){return function(){
+      var raw=(input.value||'').trim();
+      var parsed=Math.floor(parseFloat(raw));
+      if(!raw||!Number.isFinite(parsed)||parsed<=0){
+        if(xpCascadeEnabled()){for(var k=level;k<=35;k++) delete playerBalance.xpBase[k];}
+        else delete playerBalance.xpBase[level];
+        refreshXpBaseInputs();recomputeXp();return;
+      }
+      var v=parsed;
+      if(Number.isFinite(v)&&v>0){
+        if(xpCascadeEnabled()) applyXpBaseCascade(level,v);
+        else {
+          if(v===BASE_XP_TABLE[level-1]) delete playerBalance.xpBase[level];
+          else playerBalance.xpBase[level]=v;
+        }
+      }
+      refreshXpBaseInputs();
+      recomputeXp();
+    }}(lv,bcIn));
+    bcIn.addEventListener('blur',function(input){return function(){input.dispatchEvent(new Event('change'))}}(bcIn));
+    bc.appendChild(bcIn);
+    tr.appendChild(bc);
+    mkCell(tr,'xp-'+lv,function(l){return function(){return xpBiasForLevel(l)}}(lv),function(l){return function(v){playerBalance.xpBias[l]=v}}(lv),recomputeXp);
+    var ov=document.createElement('td');
+    var ovIn=document.createElement('input');ovIn.type='number';ovIn.min='0';ovIn.step='1';ovIn.className='in';ovIn.style.width='78px';ovIn.placeholder='auto';
+    var ovVal=xpOverrideForLevel(lv);if(ovVal!==null)ovIn.value=String(ovVal);
+    xpOverrideInputs[lv]=ovIn;
+    ovIn.addEventListener('change',function(level,input){return function(){
+      var raw=(input.value||'').trim();
+      var parsed=Math.floor(parseFloat(raw));
+      if(!raw||!Number.isFinite(parsed)||parsed<=0){
+        if(xpCascadeEnabled()){for(var k=level;k<=35;k++) delete playerBalance.xpOverride[k];}
+        else delete playerBalance.xpOverride[level];
+        refreshXpOverrideInputs();recomputeXp();return;
+      }
+      var v=parsed;
+      if(Number.isFinite(v)&&v>0){
+        if(xpCascadeEnabled()) applyXpOverrideCascade(level,v);
+        else {
+          var fromBias=Math.floor(xpBaseForLevel(level)*xpBiasForLevel(level));
+          if(v===fromBias) delete playerBalance.xpOverride[level];
+          else playerBalance.xpOverride[level]=v;
+        }
+      }
+      refreshXpOverrideInputs();
+      recomputeXp();
+    }}(lv,ovIn));
+    ovIn.addEventListener('blur',function(input){return function(){input.dispatchEvent(new Event('change'))}}(ovIn));
+    ov.appendChild(ovIn);
+    tr.appendChild(ov);
+    var ec=document.createElement('td');ec.className='meta xp-eff';
+    tr.appendChild(ec);
+    var cc=document.createElement('td');cc.className='meta xp-cum';tr.appendChild(cc);
+    var gc=document.createElement('td');gc.className='meta xp-grow';tr.appendChild(gc);
+    xpb.appendChild(tr);
+  }
+  recomputeXp();
+  wirePlayerPreviewControls();
+  recomputePlayerPreview();
+}
 function cleanZones(){var o={};for(var z=1;z<=TOTAL_ZONES;z++){var e={};for(var i=0;i<STATS.length;i++){var s=STATS[i],v=gv(z,s);if(Math.abs(v-1)>0.0001)e[s]=parseFloat(v.toFixed(2))}if(Object.keys(e).length)o[z]=e}return o}
 function cleanMap(map){var o={};Object.keys(map).forEach(function(id){var e={};STATS.forEach(function(s){var v=map[id]&&map[id][s]!==undefined?map[id][s]:1;if(Math.abs(v-1)>0.0001)e[s]=parseFloat(v.toFixed(2))});if(Object.keys(e).length)o[id]=e});return o}
 function fmtZones(b){var ks=Object.keys(b).map(Number).sort(function(a,b2){return a-b2});if(!ks.length)return'export const ZONE_BALANCE = {};';var ls=ks.map(function(z){var p=Object.keys(b[z]).map(function(k){return k+': '+b[z][k]}).join(', ');return'  '+z+': { '+p+' },'});return'export const ZONE_BALANCE = {\\n'+ls.join('\\n')+'\\n};'}
 function fmtMap(m,name){var ids=Object.keys(m).sort();if(!ids.length)return'export const '+name+' = {};';var ls=ids.map(function(id){var p=Object.keys(m[id]).map(function(k){return k+': '+parseFloat(m[id][k].toFixed(2)).toFixed(2)}).join(', ');return'  \\''+id+'\\': { '+p+' },'});return'export const '+name+' = {\\n'+ls.join('\\n')+'\\n};'}
+function cleanPlayer(){var o={xpBias:{},xpBase:{},statGrowthBias:{},xpOverride:{},statGrowthOverride:{}};for(var lv=1;lv<=35;lv++){var b=xpBiasForLevel(lv);if(Math.abs(b-1)>0.0001)o.xpBias[lv]=parseFloat(b.toFixed(2));var xb=xpBaseForLevel(lv);if(xb!==BASE_XP_TABLE[lv-1])o.xpBase[lv]=xb;var ov=xpOverrideForLevel(lv);if(ov!==null){var fromBias=Math.floor(xb*b);if(ov!==fromBias)o.xpOverride[lv]=ov}}PLAYER_STATS.forEach(function(s){var b=statGrowthBiasFor(s);if(Math.abs(b-1)>0.0001)o.statGrowthBias[s]=parseFloat(b.toFixed(2));var ov=statGrowthOverrideFor(s);if(ov!==null){var fromBias=BASE_STAT_GROWTH[s]*b;if(Math.abs(ov-fromBias)>0.0001)o.statGrowthOverride[s]=parseFloat(ov.toFixed(3))}});return o}
+function fmtPlayer(pb){var xpKeys=Object.keys(pb.xpBias).map(Number).sort(function(a,b){return a-b});var xpEntries=xpKeys.map(function(k){return k+': '+pb.xpBias[k]});var xpLine=xpEntries.length?'{ '+xpEntries.join(', ')+' }':'{}';var xbKeys=Object.keys(pb.xpBase).map(Number).sort(function(a,b){return a-b});var xbEntries=xbKeys.map(function(k){return k+': '+Math.floor(pb.xpBase[k])});var xbLine=xbEntries.length?'{ '+xbEntries.join(', ')+' }':'{}';var sgKeys=Object.keys(pb.statGrowthBias).sort();var sgEntries=sgKeys.map(function(k){return k+': '+pb.statGrowthBias[k]});var sgLine=sgEntries.length?'{ '+sgEntries.join(', ')+' }':'{}';var xoKeys=Object.keys(pb.xpOverride).map(Number).sort(function(a,b){return a-b});var xoEntries=xoKeys.map(function(k){return k+': '+Math.floor(pb.xpOverride[k])});var xoLine=xoEntries.length?'{ '+xoEntries.join(', ')+' }':'{}';var soKeys=Object.keys(pb.statGrowthOverride).sort();var soEntries=soKeys.map(function(k){return k+': '+parseFloat(pb.statGrowthOverride[k].toFixed(3))});var soLine=soEntries.length?'{ '+soEntries.join(', ')+' }':'{}';return'export const PLAYER_BALANCE = {\\n  xpBias: '+xpLine+',\\n  xpBase: '+xbLine+',\\n  statGrowthBias: '+sgLine+',\\n  xpOverride: '+xoLine+',\\n  statGrowthOverride: '+soLine+',\\n};'}
 function setTab(tab){active=tab;document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===tab)});document.querySelectorAll('.tab-panel').forEach(function(p){p.classList.toggle('active',p.id===tab)});document.getElementById('save').textContent=tab==='zones'?'Save to areas.js':'Save to balance.js'}
-function load(){Promise.all([fetch('/api/data').then(function(r){return r.json()}),fetch('/api/entity-data').then(function(r){return r.json()}),fetch('/api/balance-data').then(function(r){return r.json()})]).then(function(all){var z=all[0],e=all[1],b=all[2];balance={};Object.keys(z.balance||{}).forEach(function(k){balance[parseInt(k,10)]=Object.assign({},z.balance[k])});enemyBalance=Object.assign({},b.enemyBalance||{});bossBalance=Object.assign({},b.bossBalance||{});entityData=e||{enemies:[],bosses:[]};var s=z.scaling||{};document.getElementById('rates').textContent='Base scaling: hp x'+(s.hp?(1+s.hp).toFixed(2):'?')+'/zone | atk x'+(s.atk?(1+s.atk).toFixed(2):'?')+'/zone | gold x'+(s.gold?(1+s.gold).toFixed(2):'?')+'/zone | xp x'+(s.xp?(1+s.xp).toFixed(2):'?')+'/zone';cellRefs={};buildZones();buildSparks();buildEnemies();buildBosses();setTab('zones')}).catch(function(err){document.getElementById('rates').textContent='Error: '+err.message})}
+function load(){Promise.all([fetch('/api/data').then(function(r){return r.json()}),fetch('/api/entity-data').then(function(r){return r.json()}),fetch('/api/balance-data').then(function(r){return r.json()}),fetch('/api/player-data').then(function(r){return r.json()})]).then(function(all){var z=all[0],e=all[1],b=all[2],p=all[3];balance={};Object.keys(z.balance||{}).forEach(function(k){balance[parseInt(k,10)]=Object.assign({},z.balance[k])});enemyBalance=Object.assign({},b.enemyBalance||{});bossBalance=Object.assign({},b.bossBalance||{});playerBalance=Object.assign({xpBias:{},xpBase:{},statGrowthBias:{},xpOverride:{},statGrowthOverride:{}},p.playerBalance||{});playerBalance.xpBias=Object.assign({},playerBalance.xpBias||{});playerBalance.xpBase=Object.assign({},playerBalance.xpBase||{});playerBalance.statGrowthBias=Object.assign({},playerBalance.statGrowthBias||{});playerBalance.xpOverride=Object.assign({},playerBalance.xpOverride||{});playerBalance.statGrowthOverride=Object.assign({},playerBalance.statGrowthOverride||{});entityData=e||{enemies:[],bosses:[]};var s=z.scaling||{};document.getElementById('rates').textContent='Base scaling: hp x'+(s.hp?(1+s.hp).toFixed(2):'?')+'/zone | atk x'+(s.atk?(1+s.atk).toFixed(2):'?')+'/zone | gold x'+(s.gold?(1+s.gold).toFixed(2):'?')+'/zone | xp x'+(s.xp?(1+s.xp).toFixed(2):'?')+'/zone';cellRefs={};buildZones();buildSparks();buildEnemies();buildBosses();buildPlayer();var xpc=document.getElementById('xpCascade');if(xpc){xpc.addEventListener('change',function(){refreshXpBaseInputs();refreshXpOverrideInputs();recomputeXp()})}setTab('zones')}).catch(function(err){document.getElementById('rates').textContent='Error: '+err.message})}
 document.querySelectorAll('.tab-btn').forEach(function(b){b.addEventListener('click',function(){setTab(b.dataset.tab)})});
-document.getElementById('save').addEventListener('click',function(){var btn=this,url=active==='zones'?'/api/save':'/api/save-balance',payload=active==='zones'?{balance:cleanZones()}:{enemyBalance:cleanMap(enemyBalance),bossBalance:cleanMap(bossBalance)};fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(r){return r.json()}).then(function(j){if(!j.ok){alert('Save failed: '+(j.error||'unknown'));return}var label=active==='zones'?'Save to areas.js':'Save to balance.js';btn.textContent='Saved!';btn.classList.add('success');setTimeout(function(){btn.textContent=label;btn.classList.remove('success')},2000)}).catch(function(e){alert('Save error: '+e.message)})});
+document.getElementById('save').addEventListener('click',function(){var btn=this,url,payload;if(active==='zones'){url='/api/save';payload={balance:cleanZones()}}else if(active==='player'){url='/api/save-player';payload={playerBalance:cleanPlayer()}}else{url='/api/save-balance';payload={enemyBalance:cleanMap(enemyBalance),bossBalance:cleanMap(bossBalance)}}fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(r){return r.json()}).then(function(j){if(!j.ok){alert('Save failed: '+(j.error||'unknown'));return}var label=active==='zones'?'Save to areas.js':'Save to balance.js';btn.textContent='Saved!';btn.classList.add('success');setTimeout(function(){btn.textContent=label;btn.classList.remove('success')},2000)}).catch(function(e){alert('Save error: '+e.message)})});
 document.getElementById('simbtn').addEventListener('click',function(){var p=document.getElementById('sim'),o=document.getElementById('simout');p.style.display='block';o.textContent='Running simulation...';fetch('/api/sim',{method:'POST'}).then(function(r){return r.json()}).then(function(j){o.textContent=j.output||'(no output)';p.scrollIntoView({behavior:'smooth',block:'start'})}).catch(function(e){o.textContent='Error: '+e.message})});
-document.getElementById('copy').addEventListener('click',function(){var btn=this,code='';if(active==='zones')code=fmtZones(cleanZones());else if(active==='enemies')code=fmtMap(cleanMap(enemyBalance),'ENEMY_BALANCE');else code=fmtMap(cleanMap(bossBalance),'BOSS_BALANCE');navigator.clipboard.writeText(code).then(function(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy Code'},1500)}).catch(function(e){alert('Copy failed: '+e.message)})});
+document.getElementById('copy').addEventListener('click',function(){var btn=this,code='';if(active==='zones')code=fmtZones(cleanZones());else if(active==='player')code=fmtPlayer(cleanPlayer());else if(active==='enemies')code=fmtMap(cleanMap(enemyBalance),'ENEMY_BALANCE');else code=fmtMap(cleanMap(bossBalance),'BOSS_BALANCE');navigator.clipboard.writeText(code).then(function(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy Code'},1500)}).catch(function(e){alert('Copy failed: '+e.message)})});
 load();
 </script></body></html>`;
 

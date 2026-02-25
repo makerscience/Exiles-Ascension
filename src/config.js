@@ -1,3 +1,5 @@
+import { getXpBaseValue, getXpForLevelValue, getStatGrowthValue } from './data/balance.js';
+
 // Game balance constants — all tuning numbers live here.
 
 export const DAMAGE_FORMULAS = {
@@ -101,11 +103,21 @@ export const PROGRESSION_V2 = {
             3530,3980,4480,5020,5620,6280,7000,7800,8680,9640,
             10700,11870,13150,14560,16100],
   xpForLevel(level) {
-    if (level <= 0) return 50;
-    if (level <= 35) return this.xpTable[level - 1];
-    return Math.floor(this.xpTable[34] * (1.1 ** (level - 35)));
+    let base;
+    if (level <= 0) base = 50;
+    else if (level <= 35) base = this.xpTable[level - 1];
+    else base = Math.floor(getXpBaseValue(35, this.xpTable[34]) * (1.1 ** (level - 35)));
+    return getXpForLevelValue(level, base);
   },
-  statGrowthPerLevel: { str: 2, def: 2, hp: 12, regen: 0.1, agi: 0.5 },
+  get statGrowthPerLevel() {
+    return {
+      str: getStatGrowthValue('str', 2),
+      def: getStatGrowthValue('def', 2),
+      hp: getStatGrowthValue('hp', 12),
+      regen: getStatGrowthValue('regen', 0.1),
+      agi: getStatGrowthValue('agi', 0.5),
+    };
+  },
   startingStats: { str: 10, def: 5, hp: 100, regen: 1, agi: 3, atkSpeed: 1.0, level: 1, xp: 0 },
 };
 

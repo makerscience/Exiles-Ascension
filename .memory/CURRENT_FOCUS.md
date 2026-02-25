@@ -1,7 +1,7 @@
 # CURRENT_FOCUS
 
 ## One-liner
-- Enemy Roster Redesign plan is implemented through Phase 7 (guardrails, roster, encounters, bosses, mechanics, stance UI, verification); next step is manual balance/playtest validation and follow-up tuning.
+- Balance GUI now has 4 tabs (Zones, Enemies, Bosses, Player); player progression biases wired into game logic; next step is manual balance/playtest validation and follow-up tuning.
 
 ## Active Objectives (max 3)
 1. **Phase 7 manual gate:** Playtest zones 1-10 and run mechanic spot checks (miss, armor break, summon/interrupt, corruption/cleanse), plus boundary checks 10->11 and 20->21
@@ -23,15 +23,12 @@
 
 ## How to Resume in 30 Seconds
 - **Open:** `.memory/CURRENT_FOCUS.md`
-- **Last change:** Completed Enemy Roster Redesign plan through Phase 7 with automated verification harness.
+- **Last change:** Added Player tab to Balance GUI; wired XP/stat-growth biases into game logic; fixed pre-existing `var` closure bug in zone slider save.
 - **Key implementation files:**
-  - `src/data/areas.js`, `src/data/enemies.js`, `src/data/encounters.js`, `src/data/bosses.js`
-  - `scripts/validate-data.js` (new schema + encounter validations)
-  - `src/systems/CombatEngine.js` (evasion, armor break, summon/interrupt, corruption)
-  - `src/events.js` (new events + contracts)
-  - `src/scenes/GameScene.js` (runtime member-add + combat feedback hooks)
-  - `src/scenes/UIScene.js` + `src/ui/ArmorBreakButton.js` + `src/ui/InterruptButton.js` + `src/ui/CleanseButton.js` + `src/ui/CorruptionIndicator.js`
-  - `scripts/verify-combat-mechanics.js` + `package.json` (`verify:combat`)
+  - `src/data/balance.js` (PLAYER_BALANCE + getXpBias/getStatGrowthBias)
+  - `src/config.js` (xpForLevel applies xpBias)
+  - `src/systems/Store.js` (applyLevelUp applies statGrowthBias)
+  - `scripts/zone-balance-gui.js` (Player tab, /api/player-data, /api/save-player, var closure fix, Cache-Control headers)
 - **Verification commands:** `npm run verify:combat`, `npm run build`, `npm run validate:data`
 
 ## Key Context
@@ -48,14 +45,14 @@
 ---
 
 ## Last Session Summary (max ~8 bullets)
-- Shifted world structure to 35 global zones and updated area starts/boundaries to 1/11/21
-- Expanded enemy schema with `evasion`, `armor`, `corruption`, and `summon` fields plus validator checks
-- Re-authored enemy roster/zone coverage and encounter templates for the redesigned progression
-- Updated boss roster to one boss per zone (35 total) including Area 1 zones 6-10 additions
-- Implemented mechanics: player miss handling, armor break/restore lifecycle, summon/interrupt flow, corruption stacks + decay + cleanse
-- Added runtime encounter member-add events and GameScene handling for mid-encounter summons
-- Refactored stance action UI ownership into UIScene with two action slots and three new stance utility buttons
-- Added Phase 7 verification harness (`npm run verify:combat`) and validated with build + data checks
+- Added `PLAYER_BALANCE` to `src/data/balance.js` with `xpBias` and `statGrowthBias` sparse maps + accessor functions
+- Wired `getXpBias(level)` into `PROGRESSION_V2.xpForLevel()` in `src/config.js`
+- Wired `getStatGrowthBias(stat)` into `Store.applyLevelUp()` in `src/systems/Store.js`
+- Added Player tab to Balance GUI: 5 stat-growth sliders + 35-row XP table with bias/effective/cumulative/growth%
+- Added `/api/player-data` and `/api/save-player` endpoints + parse/format helpers in GUI server
+- Fixed pre-existing `var` closure bug in `buildZones()` — zone slider changes were writing to `balance[31]` instead of correct zone, causing saves to silently lose all zone edits
+- Added `Cache-Control: no-store` header to all `sendJson()` responses to prevent browser caching of API data
+- `npm run build` passes
 
 ## Pinned References
 - Governance rules: `CLAUDE.md`

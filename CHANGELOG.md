@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2026-02-25 - Player Tab in Balance GUI + Zone Save Bugfix
+- **New PLAYER_BALANCE in balance.js:** sparse `xpBias` (per-level) and `statGrowthBias` (per-stat) maps with accessor functions `getXpBias()` / `getStatGrowthBias()`
+- **XP bias wired into config.js:** `PROGRESSION_V2.xpForLevel()` now multiplies base XP by `getXpBias(level)`
+- **Stat growth bias wired into Store.js:** `applyLevelUp()` now multiplies each stat growth by `getStatGrowthBias(stat)`
+- **Player tab added to Balance GUI:** 5 stat-growth sliders + 35-row XP table with bias sliders, effective/cumulative/growth% columns, live recomputation, save/copy support
+- **Fixed zone slider save bug:** `var` closure in `buildZones()` caused all slider callbacks to reference post-loop `z=31`; zone edits were silently lost on save. Wrapped in IIFE to capture correct `z` per iteration. Added `Cache-Control: no-store` to API responses.
+
 ## 2026-02-24 - Enemy Roster Redesign Phases 0-4 (Data, Encounters, Bosses)
 - **World structure updated to 35 zones:** `TOTAL_ZONES` is now 35, with area starts moved to 1/11/21 and Area 2/3 labels updated (`The Whispering Woods`, `The Blighted Mire`, `The Shattered Ruins`)
 - **Boundary-sensitive data shifted by +5 for Areas 2-3:** enemy zone ranges, encounter area starts, and boss zone mappings were updated for the new global zone layout
