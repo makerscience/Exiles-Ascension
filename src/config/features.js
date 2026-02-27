@@ -8,4 +8,6 @@ export const FEATURES = {
   cheatsEnabled: false,
   spritePreviewEnabled: true,
   shadowsEnabled: false,
+  systemLogsEnabled: false,
+  expandedGameplayLayoutEnabled: true,
 };

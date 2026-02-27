@@ -345,7 +345,10 @@ const DialogueManager = {
     const offlineResult = OfflineProgress.getLastResult();
     if (!offlineResult && state0.totalKills === 0 && !state0.flags.firstLaunch) {
       Store.setFlag('firstLaunch', true);
-      say(pick(FIRST_LAUNCH), 'neutral', 'Welcome');
+      emit(EVENTS.UI_ONBOARDING_REQUESTED, {
+        title: 'SYSTEM BRIEFING',
+        lines: FIRST_LAUNCH,
+      });
     }
 
     // Offline return quip (>5 min away).

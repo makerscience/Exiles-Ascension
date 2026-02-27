@@ -12,6 +12,9 @@ import { getActiveArmorSet, ARMOR_SETS } from '../config/playerSprites.js';
 import { FEATURES } from '../config/features.js';
 import { parseStackKey } from '../systems/InventorySystem.js';
 
+const PLAYER_X_RATIO = 200 / 960;
+const ENEMY_X_RATIO = 700 / 960;
+
 export default class GameScene extends Phaser.Scene {
   constructor() {
     super('GameScene');
@@ -23,9 +26,9 @@ export default class GameScene extends Phaser.Scene {
 
   create() {
     const ga = LAYOUT.gameArea;
-    this._playerX = ga.x + 200;
+    this._playerX = ga.x + Math.round(ga.w * PLAYER_X_RATIO);
     const playerX = this._playerX;
-    this._enemyX = ga.x + 700;
+    this._enemyX = ga.x + Math.round(ga.w * ENEMY_X_RATIO);
     this._combatY = ga.y + ga.h - 225;
     this._enemyY = this._combatY + 40;
 
@@ -250,6 +253,11 @@ export default class GameScene extends Phaser.Scene {
     this._unsubs.push(on(EVENTS.WORLD_AREA_CHANGED, (data) => {
       this._destroyParallax();
       this._createParallax(data.area);
+      this._applyStanceTint(Store.getState().currentStance);
+    }));
+    // Safety: if any flow mutates area without emitting WORLD_AREA_CHANGED,
+    // re-apply tint on zone updates too.
+    this._unsubs.push(on(EVENTS.WORLD_ZONE_CHANGED, () => {
       this._applyStanceTint(Store.getState().currentStance);
     }));
 
@@ -549,32 +557,22 @@ export default class GameScene extends Phaser.Scene {
 
   _applyStanceTint(stanceId) {
     if (!this.playerRect) return;
-    const area = Store.getState().currentArea;
-    const areaTheme = ZONE_THEMES[area];
-    const areaTint = areaTheme && areaTheme.playerTint != null ? areaTheme.playerTint : 0xffffff;
-    let stanceTint = 0xffffff;
+    const areaTint = this._getAreaPlayerTint();
     switch (stanceId) {
       case 'tempest':
-        stanceTint = 0xaaccff;
         this._stanceIcon.setText('⚡').setColor('#facc15');
         break;
       case 'fortress':
-        stanceTint = 0xccccdd;
         this._stanceIcon.setText('⬢').setColor('#60a5fa');
         break;
       default:
         this._stanceIcon.setText('▲').setColor('#ef4444');
         break;
     }
-    // Blend stance and area tints by multiplying per-channel
-    const r = ((stanceTint >> 16) & 0xff) * ((areaTint >> 16) & 0xff) / 255;
-    const g = ((stanceTint >> 8) & 0xff) * ((areaTint >> 8) & 0xff) / 255;
-    const b = (stanceTint & 0xff) * (areaTint & 0xff) / 255;
-    const blended = (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b);
-    if (blended === 0xffffff) {
-      this.playerRect.clearTint();
-    } else {
-      this.playerRect.setTint(blended);
+    // Player tint is area-driven. Always clear first to prevent stale tint carryover.
+    this.playerRect.clearTint();
+    if (areaTint != null && areaTint !== 0xffffff) {
+      this.playerRect.setTint(areaTint);
     }
     // Swap walk frames per stance
     this._walkFrames = stanceId === 'fortress' ? this._fortressWalkFrames : this._defaultWalkFrames;
@@ -655,6 +653,13 @@ export default class GameScene extends Phaser.Scene {
     const theme = ZONE_THEMES[area];
     if (!theme) return null;
     if (theme.enemyTint != null) return theme.enemyTint;
+    return theme.playerTint != null ? theme.playerTint : null;
+  }
+
+  _getAreaPlayerTint() {
+    const area = Store.getState().currentArea;
+    const theme = ZONE_THEMES[area];
+    if (!theme) return null;
     return theme.playerTint != null ? theme.playerTint : null;
   }
 

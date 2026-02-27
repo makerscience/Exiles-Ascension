@@ -4,7 +4,7 @@
 import Phaser from 'phaser';
 import ModalPanel from './ModalPanel.js';
 import { EVENTS } from '../events.js';
-import { COLORS } from '../config.js';
+import { COLORS, WORLD, LAYOUT } from '../config.js';
 import { getItem, getScaledItem } from '../data/items.js';
 import {
   getPlayerGlobalZone, getLeftSlots, getRightSlots, getAccessorySlots,
@@ -53,7 +53,7 @@ export default class InventoryPanel extends ModalPanel {
       height: PANEL_H,
       hotkey: 'I',
       buttonLabel: 'BAG [I]',
-      buttonX: 480 - 80,
+      buttonX: LAYOUT.gameArea.x + LAYOUT.gameArea.w / 2 - 80,
       buttonColor: '#ffffff',
     });
 
@@ -952,8 +952,8 @@ export default class InventoryPanel extends ModalPanel {
   _positionTooltip(container, px, py, w, h) {
     let x = px + 12;
     let y = py + 16;
-    if (x + w > 1280) x = px - w - 4;
-    if (y + h > 720) y = py - h - 4;
+    if (x + w > WORLD.width) x = px - w - 4;
+    if (y + h > WORLD.height) y = py - h - 4;
     if (x < 0) x = 0;
     if (y < 0) y = 0;
     container.setPosition(x, y);

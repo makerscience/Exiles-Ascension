@@ -36,6 +36,8 @@ let store = null;
 let autosaveTimer = null;
 let boundBeforeUnload = null;
 let saveRequestedUnsub = null;
+let stateChangedUnsub = null;
+let settingsSaveTimer = null;
 
 /** Migration functions keyed by target schemaVersion.
  *  Fresh save track for the vertical slice — starts at v1, no legacy migrations.
@@ -133,6 +135,18 @@ const SaveManager = {
 
     // Save on explicit request (e.g. after prestige)
     saveRequestedUnsub = on(EVENTS.SAVE_REQUESTED, () => SaveManager.save());
+
+    // Save settings quickly (debounced) so volume changes persist across short sessions.
+    stateChangedUnsub = on(EVENTS.STATE_CHANGED, ({ changedKeys } = {}) => {
+      if (!Array.isArray(changedKeys) || !changedKeys.includes('settings')) return;
+      if (settingsSaveTimer) {
+        clearTimeout(settingsSaveTimer);
+      }
+      settingsSaveTimer = setTimeout(() => {
+        settingsSaveTimer = null;
+        SaveManager.save();
+      }, 300);
+    });
   },
 
   destroy() {
@@ -147,6 +161,14 @@ const SaveManager = {
     if (saveRequestedUnsub) {
       saveRequestedUnsub();
       saveRequestedUnsub = null;
+    }
+    if (stateChangedUnsub) {
+      stateChangedUnsub();
+      stateChangedUnsub = null;
+    }
+    if (settingsSaveTimer) {
+      clearTimeout(settingsSaveTimer);
+      settingsSaveTimer = null;
     }
     store = null;
     activeSlot = null;

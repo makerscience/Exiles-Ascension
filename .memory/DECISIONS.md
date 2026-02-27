@@ -494,6 +494,27 @@ Format:
 - Alternatives considered: Separate COMBAT_MECHANIC_INFO event (unnecessary indirection). SystemLog querying CombatEngine for enemy data (coupling).
 - Consequences / Follow-ups: Any future combat mechanic feedback (e.g. crit vulnerability, elemental weakness) can follow the same pattern — enrich spawn payload, add a log handler.
 
+## 2026-02-27
+- Tags: architecture, ui-layout, feature-gates
+- Decision: Gameplay layout now supports two profiles (`CLASSIC_LAYOUT`, `EXPANDED_LAYOUT`) in `src/config/layout.js`, selected by feature flags. Expanded profile activates only when `expandedGameplayLayoutEnabled=true` AND `systemLogsEnabled=false`.
+- Rationale: We needed to reclaim right-side space after hiding `SystemDialogue`/`SystemLog`, but with a one-switch rollback path. Profile-based selection makes layout behavior explicit and reversible without branchy scene-level conditionals.
+- Alternatives considered: Hard-switch to full width unconditionally (no rollback), scatter `if (expanded)` checks across UI components (fragile and hard to maintain).
+- Consequences / Follow-ups: New layout work should derive anchors from `LAYOUT`/`WORLD`, not hardcoded `960`/`1280` values. Compile verification was run in all 4 flag combinations; visual QA pass remains the follow-up.
+
+## 2026-02-27
+- Tags: ui-layout
+- Decision: Combat/UI anchor points moved to ratio-based positions relative to `LAYOUT.gameArea.w` for compatibility across classic and expanded modes.
+- Rationale: Fixed pixel offsets tuned for a 960px gameplay region made controls and combat staging feel left-cramped in expanded mode. Ratio anchors preserve relative composition in both profiles with minimal code churn.
+- Alternatives considered: Separate hardcoded positions per profile (duplication, more tuning surfaces), full auto-layout rewrite (too heavy for this pass).
+- Consequences / Follow-ups: Ratios are initial tuning values, not final art direction. Next pass should be feel-based tuning under real gameplay conditions.
+
+## 2026-02-27
+- Tags: ui, architecture
+- Decision: Added `UI_ONBOARDING_REQUESTED` event and `OnboardingPopup` modal so first-run teaching is presented as a pause-safe popup instead of only System log lines.
+- Rationale: With logs hidden and onboarding content being critical, tutorial delivery needs a guaranteed surface. Popup + temporary `GameScene` pause improves readability and onboarding clarity.
+- Alternatives considered: Keep onboarding in log only (easy to miss), hardcode popup spawn directly in UIScene (couples narrative triggers to scene code).
+- Consequences / Follow-ups: Event-driven UI onboarding remains decoupled and can be reused for future milestone popups without tying logic to the log panels.
+
 ## 2026-02-13
 - Tags: convention
 - Decision: Area names are authoritative in `areas.js` only. ZONE_THEMES in theme.js holds visual config (layers, images, trees, ferns) but no names. ZoneNav, SystemLog, and DialogueManager all read names from `getArea()`.

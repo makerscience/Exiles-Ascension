@@ -87,6 +87,7 @@ export const EVENTS = {
   // Dialogue / UI
   DIALOGUE_QUEUED:      'dialogue:queued',
   DIALOGUE_DISPLAYED:   'dialogue:displayed',
+  UI_ONBOARDING_REQUESTED: 'ui:onboardingRequested',
   SKILL_UNLOCKED:       'skill:unlocked',
   UI_TOAST:             'ui:toast',
 };

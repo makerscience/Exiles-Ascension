@@ -4,6 +4,7 @@
 import ModalPanel from './ModalPanel.js';
 import SaveManager from '../systems/SaveManager.js';
 import Store from '../systems/Store.js';
+import { LAYOUT } from '../config.js';
 
 const PANEL_W = 500;
 const PANEL_H = 420;
@@ -16,7 +17,7 @@ export default class SettingsPanel extends ModalPanel {
       height: PANEL_H,
       hotkey: 'ESC',
       buttonLabel: 'SETTINGS',
-      buttonX: 960 - 60,
+      buttonX: LAYOUT.bottomBar.x + LAYOUT.bottomBar.w - 60,
       buttonColor: '#a1a1aa',
       borderColor: 0xa1a1aa,
       titleColor: '#a1a1aa',

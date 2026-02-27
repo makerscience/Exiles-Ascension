@@ -73,7 +73,7 @@ function createInitialState() {
       // Area entrance flags
       reachedArea2: false, reachedArea3: false, reachedArea4: false, reachedArea5: false,
     },
-    currentStance: 'ruin',
+    currentStance: 'tempest',
     settings: { autoAttack: false, musicVolume: 0.5 },
     lootPity: { head: 0, chest: 0, main_hand: 0, legs: 0, boots: 0, gloves: 0, amulet: 0 },
     killsPerEnemy: {},

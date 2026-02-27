@@ -43,6 +43,7 @@ export const ZONE_THEMES = {
     trees: ['fg_tree003', 'fg_tree004'],
     ferns: ['fern', 'fern002'],
     skyHeightScale: 0.333,
+    playerTint: 0xffffff,
   },
   2: {
     layers: [0x1a2e1a, 0x152815, 0x0d1f0d],
@@ -70,7 +71,10 @@ export const ZONE_THEMES = {
     path: 'swamp_path',
     pathHeight: 150,
   },
-  3: { layers: [0x1a1a2e, 0x15152b, 0x0d0d1f] },
+  3: {
+    layers: [0x1a1a2e, 0x15152b, 0x0d0d1f],
+    playerTint: 0xc8d0e6,
+  },
 };
 
 export const PARALLAX = {

@@ -3,7 +3,7 @@
 
 import ModalPanel from './ModalPanel.js';
 import { on, EVENTS } from '../events.js';
-import { PRESTIGE } from '../config.js';
+import { PRESTIGE, LAYOUT } from '../config.js';
 import Store from '../systems/Store.js';
 import PrestigeManager from '../systems/PrestigeManager.js';
 import { format } from '../systems/BigNum.js';
@@ -20,7 +20,7 @@ export default class PrestigePanel extends ModalPanel {
       height: PANEL_H,
       hotkey: 'P',
       buttonLabel: 'PRESTIGE [P]',
-      buttonX: 480 + 240,
+      buttonX: LAYOUT.gameArea.x + LAYOUT.gameArea.w / 2 + 240,
       buttonColor: '#f59e0b',
       borderColor: 0xf59e0b,
       titleColor: '#f59e0b',

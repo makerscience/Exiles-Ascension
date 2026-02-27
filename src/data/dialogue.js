@@ -4,7 +4,9 @@
 // ── First launch ──────────────────────────────────────────────────
 
 export const FIRST_LAUNCH = [
-  'Welcome to the Harsh Threshold. Survive.',
+  'Welcome to the Harsh Threshold. Try not to die immediately.',
+  'Loop primer: kill enemies, level up, equip upgrades, push deeper zones.',
+  'Stances decide tempo. Ruin bursts, Tempest shreds, Fortress endures. Swap for the fight in front of you.',
 ];
 
 // ── One-shot triggers (flag-gated) ─────────────────────────────────

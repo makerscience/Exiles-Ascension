@@ -3,7 +3,7 @@
 
 import ModalPanel from './ModalPanel.js';
 import { EVENTS } from '../events.js';
-import { PRESTIGE, STANCES } from '../config.js';
+import { PRESTIGE, STANCES, LAYOUT } from '../config.js';
 import Store from '../systems/Store.js';
 import TerritoryManager from '../systems/TerritoryManager.js';
 import * as ComputedStats from '../systems/ComputedStats.js';
@@ -20,7 +20,7 @@ export default class StatsPanel extends ModalPanel {
       height: PANEL_H,
       hotkey: 'C',
       buttonLabel: 'STATS [C]',
-      buttonX: 480 + 200,
+      buttonX: LAYOUT.gameArea.x + LAYOUT.gameArea.w / 2 + 200,
       buttonColor: '#ffffff',
     });
   }

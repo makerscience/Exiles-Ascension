@@ -23,6 +23,7 @@ import PrestigePanel from '../ui/PrestigePanel.js';
 import SettingsPanel from '../ui/SettingsPanel.js';
 import StatsPanel from '../ui/StatsPanel.js';
 import CheatDeck from '../ui/CheatDeck.js';
+import OnboardingPopup from '../ui/OnboardingPopup.js';
 import DialogueManager from '../systems/DialogueManager.js';
 import SkillUnlockDirector from '../systems/SkillUnlockDirector.js';
 import FirstCrackDirector from '../systems/FirstCrackDirector.js';
@@ -55,13 +56,17 @@ export default class UIScene extends Phaser.Scene {
 
     // Initialize UI components
     this.topBar = new TopBar(this);
-    this.systemDialogue = new SystemDialogue(this);
+    this.systemDialogue = null;
+    this.systemLog = null;
+    if (FEATURES.systemLogsEnabled) {
+      this.systemDialogue = new SystemDialogue(this);
 
-    // Separator between dialogue panel and system log
-    const dp = LAYOUT.dialoguePanel;
-    this.add.rectangle(dp.x + dp.w / 2, dp.y + dp.h, dp.w, 1, COLORS.separator);
+      // Separator between dialogue panel and system log
+      const dp = LAYOUT.dialoguePanel;
+      this.add.rectangle(dp.x + dp.w / 2, dp.y + dp.h, dp.w, 1, COLORS.separator);
 
-    this.systemLog = new SystemLog(this);
+      this.systemLog = new SystemLog(this);
+    }
     this.zoneNav = new ZoneNav(this);
     this.bossChallenge = new BossChallenge(this);
     this.drinkButton = new DrinkButton(this);
@@ -75,9 +80,9 @@ export default class UIScene extends Phaser.Scene {
     this.corruptionIndicator = new CorruptionIndicator(this);
 
     // Stance action layout: Slot A = legacy skill, Slot B = new trait-counter skill.
-    const slotAX = ga.x + 110;
+    const slotAX = ga.x + Math.round(ga.w * (110 / 960));
     const slotAY = ga.y + ga.h - 10;
-    const slotBX = ga.x + 110;
+    const slotBX = ga.x + Math.round(ga.w * (110 / 960));
     const slotBY = ga.y + ga.h - 46;
     this.smashButton.setPosition(slotAX, slotAY);
     this.flurryButton.setPosition(slotAX, slotAY);
@@ -85,7 +90,7 @@ export default class UIScene extends Phaser.Scene {
     this.armorBreakButton.setPosition(slotBX, slotBY);
     this.interruptButton.setPosition(slotBX, slotBY);
     this.cleanseButton.setPosition(slotBX, slotBY);
-    this.corruptionIndicator.setPosition(ga.x + 190, ga.y + 30);
+    this.corruptionIndicator.setPosition(ga.x + Math.round(ga.w * (190 / 960)), ga.y + 30);
 
     this._actionButtons = [
       this.smashButton, this.flurryButton, this.bulwarkButton,
@@ -113,11 +118,12 @@ export default class UIScene extends Phaser.Scene {
     this.upgradePanel = new UpgradePanel(this);
     this.settingsPanel = new SettingsPanel(this);
     this.statsPanel = new StatsPanel(this);
+    this.onboardingPopup = new OnboardingPopup(this);
 
     // Modal registry for mutual exclusion
     this._modals = [
       this.inventoryPanel, this.upgradePanel,
-      this.settingsPanel, this.statsPanel,
+      this.settingsPanel, this.statsPanel, this.onboardingPopup,
     ];
 
     // Gated: prestige panel
@@ -294,6 +300,7 @@ export default class UIScene extends Phaser.Scene {
     this.prestigePanel = null;
     this.settingsPanel = null;
     this.statsPanel = null;
+    this.onboardingPopup = null;
     this._modals = [];
     if (this.cheatDeck) { this.cheatDeck.destroy(); this.cheatDeck = null; }
     DialogueManager.destroy();

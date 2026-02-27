@@ -8,6 +8,7 @@ import UpgradeManager from '../systems/UpgradeManager.js';
 import { getUpgradesByGroup, getSkillUpgradesByStance, getUpgrade } from '../data/upgrades.js';
 import { FAILED_PURCHASE } from '../data/dialogue.js';
 import { makeButton } from './ui-utils.js';
+import { LAYOUT } from '../config.js';
 
 const PANEL_W = 760;
 const PANEL_H = 560;
@@ -26,7 +27,7 @@ export default class UpgradePanel extends ModalPanel {
       height: PANEL_H,
       hotkey: 'U',
       buttonLabel: 'SKILLS [U]',
-      buttonX: 480 + 80,
+      buttonX: LAYOUT.gameArea.x + LAYOUT.gameArea.w / 2 + 80,
       buttonColor: '#ffffff',
     });
 
