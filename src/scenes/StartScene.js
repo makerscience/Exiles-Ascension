@@ -14,6 +14,8 @@ const BUTTON_STYLE = {
   align: 'center',
 };
 
+const SLOT_COUNT = 3;
+
 export default class StartScene extends Phaser.Scene {
   constructor() {
     super('StartScene');
@@ -21,6 +23,11 @@ export default class StartScene extends Phaser.Scene {
     this._draggingVolume = false;
     this._settingsVisible = false;
     this._quitFadeTween = null;
+    this._slotPickerMode = null; // 'new' or 'load' or null
+    this._slotObjects = [];
+    this._slotCards = [];
+    this._slotDeleteConfirm = null;
+    this._pendingNewGameSlot = null;
   }
 
   create() {
@@ -29,7 +36,7 @@ export default class StartScene extends Phaser.Scene {
     this._createParallax();
     this._createChrome();
     this._createMenu();
-    this._createConfirmRow();
+    this._createSlotPicker();
     this._createSettingsPanel();
     this._createQuitMessage();
 
@@ -118,31 +125,117 @@ export default class StartScene extends Phaser.Scene {
     this._quitBtn = this._createMenuButton(centerX, startY + gap * 3, 'QUIT', () => this._showQuitMessage());
   }
 
-  _createConfirmRow() {
+  _createSlotPicker() {
     const centerX = WORLD.width / 2;
-    const y = 565;
-    this._confirmWarning = this.add.text(centerX, y - 28, 'Current save will be overwritten.', {
+    const cardW = 420;
+    const cardH = 55;
+    const cardGap = 15;
+    const startY = 310;
+
+    this._slotCards = [];
+    this._slotObjects = [];
+
+    // Build 3 slot cards
+    for (let i = 0; i < SLOT_COUNT; i++) {
+      const slotId = i + 1;
+      const y = startY + i * (cardH + cardGap);
+
+      // Card background
+      const bg = this.add.rectangle(centerX, y, cardW, cardH, 0x1f2937)
+        .setStrokeStyle(2, 0x4b5563)
+        .setDepth(25)
+        .setVisible(false)
+        .setInteractive({ useHandCursor: true });
+
+      const defaultFill = 0x1f2937;
+      const hoverFill = 0x334155;
+
+      bg.on('pointerover', () => {
+        if (bg.input && bg.input.enabled) {
+          bg.setFillStyle(hoverFill);
+        }
+      });
+      bg.on('pointerout', () => {
+        bg.setFillStyle(defaultFill);
+      });
+      bg.on('pointerdown', () => {
+        this._onSlotSelected(slotId);
+      });
+
+      // Slot label
+      const label = this.add.text(centerX - cardW / 2 + 18, y, `SLOT ${slotId}`, {
+        fontFamily: 'monospace',
+        fontSize: '18px',
+        color: '#e5e7eb',
+        fontStyle: 'bold',
+      }).setOrigin(0, 0.5).setDepth(26).setVisible(false);
+
+      // Info text (empty or summary)
+      const info = this.add.text(centerX, y, '', {
+        fontFamily: 'monospace',
+        fontSize: '15px',
+        color: '#6b7280',
+      }).setOrigin(0.5, 0.5).setDepth(26).setVisible(false);
+
+      // Delete X button
+      const delBtn = this.add.text(centerX + cardW / 2 - 24, y, 'X', {
+        fontFamily: 'monospace',
+        fontSize: '16px',
+        color: '#ef4444',
+        fontStyle: 'bold',
+      }).setOrigin(0.5, 0.5).setDepth(27).setVisible(false)
+        .setInteractive({ useHandCursor: true });
+
+      delBtn.on('pointerdown', (_pointer, _localX, _localY, event) => {
+        event.stopPropagation();
+        this._onSlotDelete(slotId);
+      });
+
+      const card = { slotId, bg, label, info, delBtn };
+      this._slotCards.push(card);
+      this._slotObjects.push(bg, label, info, delBtn);
+    }
+
+    // Back button below cards
+    const backY = startY + SLOT_COUNT * (cardH + cardGap) + 15;
+    const backBtn = this._createMenuButton(centerX, backY, 'BACK', () => this._hideSlotPicker(), {
+      fontSize: '20px',
+      backgroundColor: '#334155',
+      padding: { x: 16, y: 7 },
+    });
+    backBtn.setDepth(26).setVisible(false);
+    this._slotObjects.push(backBtn);
+
+    // Delete/overwrite confirm row
+    const confirmY = backY + 60;
+    const confirmWarning = this.add.text(centerX, confirmY - 22, '', {
       fontFamily: 'monospace',
       fontSize: '14px',
       color: '#fecaca',
       stroke: '#000000',
       strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(20).setVisible(false);
+    }).setOrigin(0.5).setDepth(26).setVisible(false);
 
-    this._confirmYes = this._createMenuButton(centerX - 90, y, 'CONFIRM', () => this._startNewGame(true), {
+    const confirmYes = this._createMenuButton(centerX - 90, confirmY, 'CONFIRM', () => this._confirmSlotAction(), {
       fontSize: '20px',
       color: '#fef2f2',
       backgroundColor: '#991b1b',
       padding: { x: 14, y: 7 },
     });
-    this._confirmNo = this._createMenuButton(centerX + 90, y, 'CANCEL', () => this._hideNewGameConfirm(), {
+    confirmYes.setDepth(26).setVisible(false);
+
+    const confirmNo = this._createMenuButton(centerX + 90, confirmY, 'CANCEL', () => this._cancelSlotDelete(), {
       fontSize: '20px',
       color: '#f8fafc',
       backgroundColor: '#334155',
       padding: { x: 14, y: 7 },
     });
-    this._confirmYes.setVisible(false);
-    this._confirmNo.setVisible(false);
+    confirmNo.setDepth(26).setVisible(false);
+
+    this._slotConfirmWarning = confirmWarning;
+    this._slotConfirmYes = confirmYes;
+    this._slotConfirmNo = confirmNo;
+    this._slotObjects.push(confirmWarning, confirmYes, confirmNo);
   }
 
   _createSettingsPanel() {
@@ -253,47 +346,173 @@ export default class StartScene extends Phaser.Scene {
     return btn;
   }
 
-  _onNewGamePressed() {
+  // --- Slot picker ---
+
+  _showSlotPicker(mode) {
+    this._slotPickerMode = mode;
+
+    // Hide other UI
     this._setSettingsVisible(false);
     this._quitMessage.setVisible(false);
-    if (SaveManager.hasSave()) {
-      this._showNewGameConfirm();
-      return;
+
+    // Hide main menu buttons
+    this._newGameBtn.setVisible(false);
+    this._loadGameBtn.setVisible(false);
+    this._settingsBtn.setVisible(false);
+    this._quitBtn.setVisible(false);
+
+    // Hide confirm row
+    this._slotConfirmWarning.setVisible(false);
+    this._slotConfirmYes.setVisible(false);
+    this._slotConfirmNo.setVisible(false);
+    this._slotDeleteConfirm = null;
+    this._pendingNewGameSlot = null;
+
+    // Refresh each card
+    for (const card of this._slotCards) {
+      const summary = SaveManager.getSlotSummary(card.slotId);
+      const occupied = summary !== null;
+
+      card.bg.setVisible(true);
+      card.label.setVisible(true);
+      card.info.setVisible(true);
+
+      if (occupied) {
+        card.info.setText(`Lv.${summary.level} - Area ${summary.area}, Zone ${summary.zone}`);
+        card.info.setStyle({ color: '#a5b4fc' });
+        card.delBtn.setVisible(true);
+      } else {
+        card.info.setText('- Empty -');
+        card.info.setStyle({ color: '#6b7280' });
+        card.delBtn.setVisible(false);
+      }
+
+      // In load mode, gray out empty slots
+      if (mode === 'load' && !occupied) {
+        card.bg.setAlpha(0.35);
+        card.bg.disableInteractive();
+      } else {
+        card.bg.setAlpha(1);
+        card.bg.setInteractive({ useHandCursor: true });
+      }
     }
-    this._startNewGame(false);
+
+    // Show all slot objects (except confirm row which we hid above)
+    for (const obj of this._slotObjects) {
+      // Only show non-confirm objects; confirm row is handled separately
+      if (obj === this._slotConfirmWarning || obj === this._slotConfirmYes || obj === this._slotConfirmNo) continue;
+      obj.setVisible(true);
+    }
   }
 
-  _onLoadGamePressed() {
-    this._setSettingsVisible(false);
-    this._hideNewGameConfirm();
-    this.scene.start('GameScene');
+  _hideSlotPicker() {
+    this._slotPickerMode = null;
+    this._slotDeleteConfirm = null;
+    this._pendingNewGameSlot = null;
+
+    // Hide all slot objects
+    for (const obj of this._slotObjects) {
+      obj.setVisible(false);
+    }
+
+    // Show main menu buttons
+    this._newGameBtn.setVisible(true);
+    this._loadGameBtn.setVisible(true);
+    this._settingsBtn.setVisible(true);
+    this._quitBtn.setVisible(true);
+
+    // Re-evaluate Load Game availability
+    const hasSave = SaveManager.hasSave();
+    if (hasSave) {
+      this._loadGameBtn.setAlpha(1);
+      this._loadGameBtn.setInteractive({ useHandCursor: true });
+    } else {
+      this._loadGameBtn.setAlpha(0.35);
+      this._loadGameBtn.disableInteractive();
+    }
   }
 
-  _startNewGame(overwriteExisting) {
-    this._hideNewGameConfirm();
-    this._setSettingsVisible(false);
-    if (overwriteExisting) {
-      SaveManager.clearSaveForNewGame();
+  _onSlotSelected(slotId) {
+    // If confirm row is showing, ignore card clicks
+    if (this._slotDeleteConfirm !== null || this._pendingNewGameSlot !== null) return;
+
+    if (this._slotPickerMode === 'new') {
+      const summary = SaveManager.getSlotSummary(slotId);
+      if (summary !== null) {
+        // Occupied — show overwrite confirm
+        this._pendingNewGameSlot = slotId;
+        this._slotConfirmWarning.setText(`Overwrite Slot ${slotId}?`);
+        this._slotConfirmYes.setText('OVERWRITE');
+        this._slotConfirmWarning.setVisible(true);
+        this._slotConfirmYes.setVisible(true);
+        this._slotConfirmNo.setVisible(true);
+      } else {
+        this._startNewGameInSlot(slotId);
+      }
+    } else if (this._slotPickerMode === 'load') {
+      this._loadGameFromSlot(slotId);
     }
+  }
+
+  _startNewGameInSlot(slotId) {
+    SaveManager.clearSaveForNewGame(slotId);
+    SaveManager.setActiveSlot(slotId);
     Store.resetState();
     emit(EVENTS.SAVE_REQUESTED, {});
     this.scene.start('GameScene');
   }
 
-  _showNewGameConfirm() {
-    this._confirmWarning.setVisible(true);
-    this._confirmYes.setVisible(true);
-    this._confirmNo.setVisible(true);
+  _loadGameFromSlot(slotId) {
+    SaveManager.load(slotId);
+    this.scene.start('GameScene');
   }
 
-  _hideNewGameConfirm() {
-    this._confirmWarning.setVisible(false);
-    this._confirmYes.setVisible(false);
-    this._confirmNo.setVisible(false);
+  // --- Delete handlers ---
+
+  _onSlotDelete(slotId) {
+    this._slotDeleteConfirm = slotId;
+    this._pendingNewGameSlot = null;
+    this._slotConfirmWarning.setText(`Delete Slot ${slotId}?`);
+    this._slotConfirmYes.setText('CONFIRM');
+    this._slotConfirmWarning.setVisible(true);
+    this._slotConfirmYes.setVisible(true);
+    this._slotConfirmNo.setVisible(true);
+  }
+
+  _confirmSlotAction() {
+    if (this._slotDeleteConfirm !== null) {
+      const slotId = this._slotDeleteConfirm;
+      SaveManager.clearSaveForNewGame(slotId);
+      this._cancelSlotDelete();
+      // Refresh the picker
+      this._showSlotPicker(this._slotPickerMode);
+    } else if (this._pendingNewGameSlot !== null) {
+      const slotId = this._pendingNewGameSlot;
+      this._pendingNewGameSlot = null;
+      this._startNewGameInSlot(slotId);
+    }
+  }
+
+  _cancelSlotDelete() {
+    this._slotDeleteConfirm = null;
+    this._pendingNewGameSlot = null;
+    this._slotConfirmWarning.setVisible(false);
+    this._slotConfirmYes.setVisible(false);
+    this._slotConfirmNo.setVisible(false);
+  }
+
+  // --- Menu handlers ---
+
+  _onNewGamePressed() {
+    this._showSlotPicker('new');
+  }
+
+  _onLoadGamePressed() {
+    this._showSlotPicker('load');
   }
 
   _toggleSettings() {
-    this._hideNewGameConfirm();
+    if (this._slotPickerMode) this._hideSlotPicker();
     this._setSettingsVisible(!this._settingsVisible);
   }
 
@@ -308,7 +527,7 @@ export default class StartScene extends Phaser.Scene {
 
   _showQuitMessage() {
     this._setSettingsVisible(false);
-    this._hideNewGameConfirm();
+    if (this._slotPickerMode) this._hideSlotPicker();
     this._quitMessage.setText('There is no escape. Close the tab if you dare.');
     this._quitMessage.setAlpha(1).setVisible(true);
 
@@ -339,5 +558,7 @@ export default class StartScene extends Phaser.Scene {
     }
     this._parallaxLayers = [];
     this._settingsObjects = [];
+    this._slotObjects = [];
+    this._slotCards = [];
   }
 }
