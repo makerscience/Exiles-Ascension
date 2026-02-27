@@ -4,8 +4,12 @@
 import { SAVE } from '../config.js';
 import { emit, on, EVENTS } from '../events.js';
 
-const PRIMARY_KEY = 'litrpg_idle_vslice_save';
-const BACKUP_KEY = 'litrpg_idle_vslice_save_backup';
+const SLOT_PREFIX = 'litrpg_idle_vslice_save';
+const ACTIVE_SLOT_KEY = 'litrpg_idle_active_slot';
+const SLOT_IDS = [1, 2, 3];
+
+function slotKey(slotId) { return `${SLOT_PREFIX}_slot${slotId}`; }
+function slotBackupKey(slotId) { return `${SLOT_PREFIX}_slot${slotId}_backup`; }
 
 // Legacy save keys — archived on first boot, never written to again
 const LEGACY_PRIMARY_KEY = 'litrpg_idle_save';
@@ -21,6 +25,13 @@ const STANDARD_UPGRADE_IDS = [
   'power_smash_recharge',
 ];
 
+function hasParsable(key) {
+  const raw = localStorage.getItem(key);
+  if (!raw) return false;
+  try { JSON.parse(raw); return true; } catch { return false; }
+}
+
+let activeSlot = null;
 let store = null;
 let autosaveTimer = null;
 let boundBeforeUnload = null;
@@ -104,8 +115,14 @@ const SaveManager = {
     // One-time: archive legacy saves (old namespace) so they aren't lost
     this._archiveLegacySaves();
 
-    // Attempt to load existing save
-    this.load();
+    // Migrate single-save to slot system if needed
+    this._migrateToSlots();
+
+    // Restore active slot from localStorage
+    const savedSlot = localStorage.getItem(ACTIVE_SLOT_KEY);
+    if (savedSlot && SLOT_IDS.includes(Number(savedSlot))) {
+      activeSlot = Number(savedSlot);
+    }
 
     // Autosave on interval
     autosaveTimer = setInterval(() => this.save(), SAVE.autosaveInterval);
@@ -132,99 +149,111 @@ const SaveManager = {
       saveRequestedUnsub = null;
     }
     store = null;
+    activeSlot = null;
   },
 
   /** Serialize state to localStorage. Rotates current → backup before writing. */
   save() {
-    if (!store || window.__saveWiped) return;
-
+    if (!store || window.__saveWiped || !activeSlot) return;
     const state = store.getState();
     if (!state) return;
-
-    // Update timestamp before serializing
     store.updateTimestamps({ lastSave: Date.now(), lastOnline: Date.now() });
-
-    // Decimal.toJSON() auto-converts to string, so JSON.stringify just works
     const json = JSON.stringify(state);
-
-    // Rotate: current → backup, then write new current
-    const existing = localStorage.getItem(PRIMARY_KEY);
-    if (existing) {
-      localStorage.setItem(BACKUP_KEY, existing);
-    }
-    localStorage.setItem(PRIMARY_KEY, json);
-
+    const pk = slotKey(activeSlot);
+    const bk = slotBackupKey(activeSlot);
+    const existing = localStorage.getItem(pk);
+    if (existing) localStorage.setItem(bk, existing);
+    localStorage.setItem(pk, json);
     emit(EVENTS.SAVE_COMPLETED, {});
   },
 
   /** Load from localStorage. Falls back to backup if primary is corrupt. */
-  load() {
+  load(slotId) {
     if (!store) return;
-
-    let raw = localStorage.getItem(PRIMARY_KEY);
+    const pk = slotKey(slotId);
+    const bk = slotBackupKey(slotId);
+    let raw = localStorage.getItem(pk);
     let data = null;
-
-    // Try primary
     if (raw) {
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        emit(EVENTS.SAVE_CORRUPT, { source: 'primary' });
-        data = null;
-      }
+      try { data = JSON.parse(raw); }
+      catch { emit(EVENTS.SAVE_CORRUPT, { source: 'primary' }); data = null; }
     }
-
-    // Fall back to backup
     if (!data) {
-      raw = localStorage.getItem(BACKUP_KEY);
+      raw = localStorage.getItem(bk);
       if (raw) {
-        try {
-          data = JSON.parse(raw);
-          emit(EVENTS.SAVE_CORRUPT, { source: 'primary', recoveredFrom: 'backup' });
-        } catch {
-          emit(EVENTS.SAVE_CORRUPT, { source: 'both' });
-          return; // No valid save — Store keeps its default state
-        }
+        try { data = JSON.parse(raw); emit(EVENTS.SAVE_CORRUPT, { source: 'primary', recoveredFrom: 'backup' }); }
+        catch { emit(EVENTS.SAVE_CORRUPT, { source: 'both' }); return; }
       }
     }
-
-    if (!data) return; // Fresh game — no save exists
-
-    // Run migrations
+    if (!data) return;
     data = migrate(data);
-
-    // Hydrate store
     store.loadState(data);
+    activeSlot = slotId;
+    localStorage.setItem(ACTIVE_SLOT_KEY, String(slotId));
     emit(EVENTS.SAVE_LOADED, {});
   },
 
-  /** True when a parseable save exists in primary or backup slot. */
-  hasSave() {
-    const hasParsable = (key) => {
-      const raw = localStorage.getItem(key);
-      if (!raw) return false;
-      try {
-        JSON.parse(raw);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    return hasParsable(PRIMARY_KEY) || hasParsable(BACKUP_KEY);
+  /** True when a parseable save exists. Optionally check a specific slot. */
+  hasSave(slotId) {
+    if (slotId != null) {
+      return hasParsable(slotKey(slotId)) || hasParsable(slotBackupKey(slotId));
+    }
+    return SLOT_IDS.some(id => hasParsable(slotKey(id)) || hasParsable(slotBackupKey(id)));
   },
 
   /** Clear persisted save data for gameplay New Game flow (non-debug path). */
-  clearSaveForNewGame() {
-    localStorage.removeItem(PRIMARY_KEY);
-    localStorage.removeItem(BACKUP_KEY);
+  clearSaveForNewGame(slotId) {
+    localStorage.removeItem(slotKey(slotId));
+    localStorage.removeItem(slotBackupKey(slotId));
   },
 
-  /** Wipe both save keys. Dev/debug tool.
+  /** Wipe all save slots. Dev/debug tool.
    *  Sets window.__saveWiped to block orphaned HMR listeners from re-saving. */
   deleteSave() {
     window.__saveWiped = true;
-    localStorage.removeItem(PRIMARY_KEY);
-    localStorage.removeItem(BACKUP_KEY);
+    for (const id of SLOT_IDS) {
+      localStorage.removeItem(slotKey(id));
+      localStorage.removeItem(slotBackupKey(id));
+    }
+    localStorage.removeItem(ACTIVE_SLOT_KEY);
+  },
+
+  /** Return a brief summary of a slot's save data (for UI). */
+  getSlotSummary(slotId) {
+    const raw = localStorage.getItem(slotKey(slotId));
+    if (!raw) return null;
+    try {
+      const data = JSON.parse(raw);
+      return {
+        level: data?.playerStats?.level ?? 1,
+        area: data?.currentArea ?? 1,
+        zone: data?.currentZone ?? 1,
+      };
+    } catch { return null; }
+  },
+
+  setActiveSlot(slotId) {
+    activeSlot = slotId;
+    localStorage.setItem(ACTIVE_SLOT_KEY, String(slotId));
+  },
+
+  getActiveSlot() {
+    return activeSlot;
+  },
+
+  /** Migrate single-save format to slot-based format (one-time). */
+  _migrateToSlots() {
+    if (SLOT_IDS.some(id => localStorage.getItem(slotKey(id)))) return;
+    const oldPrimary = localStorage.getItem('litrpg_idle_vslice_save');
+    const oldBackup = localStorage.getItem('litrpg_idle_vslice_save_backup');
+    if (oldPrimary) {
+      localStorage.setItem(slotKey(1), oldPrimary);
+      if (oldBackup) localStorage.setItem(slotBackupKey(1), oldBackup);
+      localStorage.removeItem('litrpg_idle_vslice_save');
+      localStorage.removeItem('litrpg_idle_vslice_save_backup');
+      localStorage.setItem(ACTIVE_SLOT_KEY, '1');
+      console.log('[SaveManager] Migrated single save → slot 1');
+    }
   },
 
   /** Archive legacy saves under a dedicated key (one-time, non-destructive). */
