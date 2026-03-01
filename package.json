@@ -15,16 +15,16 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/makerscience/LitRPG-Idle.git"
+    "url": "git+https://github.com/makerscience/Exiles-Ascension.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "bugs": {
-    "url": "https://github.com/makerscience/LitRPG-Idle/issues"
+    "url": "https://github.com/makerscience/Exiles-Ascension/issues"
   },
-  "homepage": "https://github.com/makerscience/LitRPG-Idle#readme",
+  "homepage": "https://github.com/makerscience/Exiles-Ascension#readme",
   "dependencies": {
     "break_infinity.js": "^2.2.0",
     "phaser": "^3.90.0"
