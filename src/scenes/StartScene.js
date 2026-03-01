@@ -28,6 +28,7 @@ export default class StartScene extends Phaser.Scene {
     this._slotCards = [];
     this._slotDeleteConfirm = null;
     this._pendingNewGameSlot = null;
+    this._slotStatusText = null;
   }
 
   create() {
@@ -236,6 +237,16 @@ export default class StartScene extends Phaser.Scene {
     this._slotConfirmYes = confirmYes;
     this._slotConfirmNo = confirmNo;
     this._slotObjects.push(confirmWarning, confirmYes, confirmNo);
+
+    const statusText = this.add.text(centerX, confirmY + 46, '', {
+      fontFamily: 'monospace',
+      fontSize: '14px',
+      color: '#fca5a5',
+      stroke: '#000000',
+      strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(26).setVisible(false);
+    this._slotStatusText = statusText;
+    this._slotObjects.push(statusText);
   }
 
   _createSettingsPanel() {
@@ -367,6 +378,7 @@ export default class StartScene extends Phaser.Scene {
     this._slotConfirmNo.setVisible(false);
     this._slotDeleteConfirm = null;
     this._pendingNewGameSlot = null;
+    this._setSlotStatus('');
 
     // Refresh each card
     for (const card of this._slotCards) {
@@ -409,6 +421,7 @@ export default class StartScene extends Phaser.Scene {
     this._slotPickerMode = null;
     this._slotDeleteConfirm = null;
     this._pendingNewGameSlot = null;
+    this._setSlotStatus('');
 
     // Hide all slot objects
     for (const obj of this._slotObjects) {
@@ -433,6 +446,8 @@ export default class StartScene extends Phaser.Scene {
   }
 
   _onSlotSelected(slotId) {
+    this._setSlotStatus('');
+
     // If confirm row is showing, ignore card clicks
     if (this._slotDeleteConfirm !== null || this._pendingNewGameSlot !== null) return;
 
@@ -455,6 +470,7 @@ export default class StartScene extends Phaser.Scene {
   }
 
   _startNewGameInSlot(slotId) {
+    this._setSlotStatus('');
     SaveManager.clearSaveForNewGame(slotId);
     SaveManager.setActiveSlot(slotId);
     Store.resetState();
@@ -463,13 +479,19 @@ export default class StartScene extends Phaser.Scene {
   }
 
   _loadGameFromSlot(slotId) {
-    SaveManager.load(slotId);
+    this._setSlotStatus('');
+    const loaded = SaveManager.load(slotId);
+    if (!loaded) {
+      this._setSlotStatus(`Could not load Slot ${slotId}. Save is missing or corrupted.`);
+      return;
+    }
     this.scene.start('GameScene');
   }
 
   // --- Delete handlers ---
 
   _onSlotDelete(slotId) {
+    this._setSlotStatus('');
     this._slotDeleteConfirm = slotId;
     this._pendingNewGameSlot = null;
     this._slotConfirmWarning.setText(`Delete Slot ${slotId}?`);
@@ -499,6 +521,15 @@ export default class StartScene extends Phaser.Scene {
     this._slotConfirmWarning.setVisible(false);
     this._slotConfirmYes.setVisible(false);
     this._slotConfirmNo.setVisible(false);
+  }
+
+  _setSlotStatus(message) {
+    if (!this._slotStatusText) return;
+    if (!message) {
+      this._slotStatusText.setVisible(false);
+      return;
+    }
+    this._slotStatusText.setText(message).setVisible(true);
   }
 
   // --- Menu handlers ---

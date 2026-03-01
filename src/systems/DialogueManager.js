@@ -32,7 +32,7 @@ let sequenceCounter = 0;
 const SEQUENCE_STEP_MS = 1800;
 
 const STANCE_LABELS = {
-  ruin: 'Ruin',
+  ruin: 'Breaker',
   tempest: 'Tempest',
   fortress: 'Fortress',
 };

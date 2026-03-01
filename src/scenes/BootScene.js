@@ -11,6 +11,12 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('slime001_reaction',  'Images/Enemies/area1/slime001_reaction.png');
     this.load.image('slime001_attack',    'Images/Enemies/area1/slime001_attack.png');
     this.load.image('slime001_dead',      'Images/Enemies/area1/slime001_dead.png');
+    this.load.image('slime_frowny_default', 'Images/Enemies/area1/FrownySlime.png');
+    this.load.image('slime_silly_default', 'Images/Enemies/area1/SillySlime.png');
+    this.load.image('slime_scared_default', 'Images/Enemies/area1/ScaredSlime.png');
+    this.load.image('slime_worried_default', 'Images/Enemies/area1/WorriedSlime.png');
+    this.load.image('slime_unfriendly_default', 'Images/Enemies/area1/UnfriendlySlime.png');
+    this.load.image('slime_george_default', 'Images/Enemies/area1/George_.png');
     this.load.image('bg002_rear',   'Images/Backgrounds/area1/background002_rear.png');
     this.load.image('bg002_mid',    'Images/Backgrounds/area1/background002_mid.png');
     this.load.image('bg002_front',  'Images/Backgrounds/area1/background002_front.png');
@@ -124,11 +130,16 @@ export default class BootScene extends Phaser.Scene {
 
     // Stance icons
     this.load.image('icon_tempest',  'Images/TempestIcon2.png');
-    this.load.image('icon_ruin',     'Images/RuinIcon2.png');
+    this.load.image('icon_ruin',     'Images/Breakerstance1.png');
     this.load.image('icon_fortress', 'Images/Fortressstance2.png');
     this.load.image('icon_flurry_button', 'Images/FlurryIcon2.png');
     this.load.image('icon_smash_button', 'Images/SmashIcon_.png');
     this.load.image('icon_bulwark_button', 'Images/BulwarkIcon.png');
+    this.load.image('icon_drink_button', 'Images/DrinkIcon.png');
+    this.load.image('icon_inventory_button', 'Images/InventoryIcon.png');
+    this.load.image('icon_skills_button', 'Images/SkillsIcon.png');
+    this.load.image('icon_stats_button', 'Images/StatsIcon.png');
+    this.load.image('icon_settings_button', 'Images/SettingsIcon2.png');
     this.load.image('player001_default',        'Images/Player Images/armor001/Player001_default.png');
     this.load.image('player001_strongpunch',    'Images/Player Images/armor001/Player001_strongpunch.png');
     this.load.image('player001_jumpkick',       'Images/Player Images/armor001/Player001_jumpkick.png');
@@ -269,7 +280,22 @@ export default class BootScene extends Phaser.Scene {
 
     // Enemy sprites — 2× each enemy's spriteSize
     const enemyGroups = [
-      { keys: ['slime001_default', 'slime001_reaction', 'slime001_attack', 'slime001_dead'], w: 320, h: 480 },
+      {
+        keys: [
+          'slime001_default',
+          'slime001_reaction',
+          'slime001_attack',
+          'slime001_dead',
+          'slime_frowny_default',
+          'slime_silly_default',
+          'slime_scared_default',
+          'slime_worried_default',
+          'slime_unfriendly_default',
+          'slime_george_default',
+        ],
+        w: 320,
+        h: 480,
+      },
       { keys: ['forestrat001_default', 'forestrat001_reaction', 'forestrat001_attack', 'forestrat001_dead'], w: 250, h: 250 },
       { keys: ['feralhound_default', 'feralhound_reaction', 'feralhound_attack', 'feralhound_dead'], w: 512, h: 280 },
       { keys: ['thornbackboar_default', 'thornbackboar_reaction', 'thornbackboar_attack', 'thornbackboar_dead'], w: 560, h: 306 },
@@ -286,7 +312,8 @@ export default class BootScene extends Phaser.Scene {
       { keys: ['goblinwarrior001_default', 'goblinwarrior001_reaction', 'goblinwarrior001_attack', 'goblinwarrior001_dead'], w: 320, h: 384 },
       { keys: ['crackedarmor001'], w: 512, h: 512 },
       { keys: ['icon_tempest', 'icon_ruin', 'icon_fortress'], w: 128, h: 128 },
-      { keys: ['icon_flurry_button', 'icon_smash_button', 'icon_bulwark_button'], w: 128, h: 128 },
+      { keys: ['icon_flurry_button', 'icon_smash_button', 'icon_bulwark_button', 'icon_drink_button'], w: 128, h: 128 },
+      { keys: ['icon_inventory_button', 'icon_skills_button', 'icon_stats_button', 'icon_settings_button'], w: 128, h: 128 },
     ];
     for (const { keys, w, h } of enemyGroups) {
       for (const key of keys) {

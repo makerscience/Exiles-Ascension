@@ -828,12 +828,12 @@ export default class GameScene extends Phaser.Scene {
 
     const template = getEnemyById(memberData.enemyId)
       || (memberData.baseEnemyId ? getEnemyById(memberData.baseEnemyId) : null);
-    const sprites = template?.sprites || null;
+    const sprites = memberData.sprites || template?.sprites || null;
     const bossScale = memberData.isBoss ? 1.4 : 1;
-    const baseSize = template?.spriteSize || { w: 200, h: 250 };
+    const baseSize = memberData.spriteSize || template?.spriteSize || { w: 200, h: 250 };
     const size = { w: baseSize.w * bossScale, h: baseSize.h * bossScale };
-    const spriteOffsetY = template?.spriteOffsetY ?? 0;
-    const nameplateOffsetY = template?.nameplateOffsetY ?? 0;
+    const spriteOffsetY = memberData.spriteOffsetY ?? template?.spriteOffsetY ?? 0;
+    const nameplateOffsetY = memberData.nameplateOffsetY ?? template?.nameplateOffsetY ?? 0;
     const baseH = baseSize.h;
     const hDiff = size.h - baseH;
     const bottomAlignOffsetY = hDiff > 0 ? -hDiff / 2 + 40 : 0;
@@ -847,12 +847,13 @@ export default class GameScene extends Phaser.Scene {
     slot.state.spriteH = size.h;
     slot.state.spriteOffsetY = spriteOffsetY;
     slot.state.bottomAlignOffsetY = bottomAlignOffsetY;
-    slot.state.lungeDist = (template?.lungeDistance || 20) * 2;
-    slot.state.attackSpriteOffsetY = template?.attackSpriteOffsetY ?? null;
-    slot.state.attackSpriteOffsetX = template?.attackSpriteOffsetX ?? 0;
-    slot.state.baseTint = template?.spriteTint ?? null;
-    slot.state.attackSpriteScale = template?.attackSpriteScale ?? 1;
-    slot.state.spriteSpreadBonus = template?.spriteSpreadBonus ?? 0;
+    slot.state.lungeDist = (memberData.lungeDistance ?? template?.lungeDistance ?? 20) * 2;
+    slot.state.attackSpriteOffsetY = memberData.attackSpriteOffsetY ?? template?.attackSpriteOffsetY ?? null;
+    slot.state.attackSpriteOffsetX = memberData.attackSpriteOffsetX ?? template?.attackSpriteOffsetX ?? 0;
+    slot.state.baseTint = memberData.spriteTint ?? template?.spriteTint ?? null;
+    slot.state.attackSpriteScale = memberData.attackSpriteScale ?? template?.attackSpriteScale ?? 1;
+    slot.state.reactionSpriteScale = memberData.reactionSpriteScale ?? template?.reactionSpriteScale ?? 1;
+    slot.state.spriteSpreadBonus = memberData.spriteSpreadBonus ?? template?.spriteSpreadBonus ?? 0;
     slot.state.enraged = false;
 
     // Position container (layoutCount can grow as summons are added)
@@ -873,7 +874,7 @@ export default class GameScene extends Phaser.Scene {
 
     // Resize & reposition shadow to match enemy feet
     if (slot.shadow) {
-      const shadowOffY = template?.shadowOffsetY ?? 0;
+      const shadowOffY = memberData.shadowOffsetY ?? template?.shadowOffsetY ?? 0;
       slot.shadow.setPosition(0, halfH + spriteOffsetY + bottomAlignOffsetY - 65 + shadowOffY);
       slot.shadow.setDisplaySize(Math.min(size.w * 0.7, 120), 20);
     }
@@ -957,7 +958,7 @@ export default class GameScene extends Phaser.Scene {
     slot.state.atkTimerKey = `enc:${encounterId}:atk:${memberData.instanceId}`;
     slot.state.castTimerKey = null;
     slot.state.castKind = null;
-    slot.state.chargeArmor = template?.chargeArmor ?? 0;
+    slot.state.chargeArmor = memberData.chargeArmor ?? template?.chargeArmor ?? 0;
     slot.state.showAutoChargeBar = false;
 
     const chargeY = -(halfH) - 32 + npOff;
@@ -1189,7 +1190,8 @@ export default class GameScene extends Phaser.Scene {
 
         const runSpriteReaction = () => {
           slot.sprite.setTexture(slot.state.currentSprites.reaction);
-          slot.sprite.setDisplaySize(slot.state.spriteW, slot.state.spriteH);
+          const reactScale = slot.state.reactionSpriteScale ?? 1;
+          slot.sprite.setDisplaySize(slot.state.spriteW * reactScale, slot.state.spriteH * reactScale);
           this._applyEnemyTint(slot.sprite, 0xffffff, slot.state.baseTint);
           this.time.delayedCall(80, () => {
             this._applyEnemyTint(slot.sprite, slot.state.enraged ? 0xff6666 : null, slot.state.baseTint);
@@ -1447,28 +1449,46 @@ export default class GameScene extends Phaser.Scene {
         slot.sprite.y = slot.state.spriteOffsetY + slot.state.bottomAlignOffsetY;
         slot.sprite.disableInteractive();
 
-        if (slot.state.enemyId === 'a1_forest_rat') {
-          // Rat spin — local coords
+        if (slot.state.enemyId === 'a1_forest_rat' || slot.state.enemyId === 'a1_rat') {
+          // Annoying Rat death: launch backward and upward.
+          const liftY = slot.sprite.y - 260;
           this.tweens.add({
             targets: slot.sprite,
-            x: 350, y: slot.sprite.y - 400,
-            angle: 720, scaleX: 0.3, scaleY: 0.3, alpha: 0,
-            duration: 500, ease: 'Quad.easeIn',
+            x: 360,
+            y: liftY,
+            angle: 540,
+            duration: 420,
+            ease: 'Quad.easeOut',
+            onComplete: () => {
+              // Continue flying off-screen so it never appears frozen at the edge.
+              this.tweens.add({
+                targets: slot.sprite,
+                x: 760,
+                y: liftY - 120,
+                duration: 240,
+                ease: 'Quad.easeIn',
+                onComplete: () => {
+                  if (!slot.state.dying) return;
+                  slot.container.setVisible(false);
+                },
+              });
+            },
           });
-        } else if (slot.state.enemyId === 'a1_hollow_slime') {
-          // Slime wobble — local coords
+        } else if (
+          slot.state.enemyId === 'a1_hollow_slime'
+          || slot.state.enemyId === 'a1_slime'
+          || slot.state.enemyId === 'boss_a1z5_the_hollow'
+        ) {
+          // Friendly Slime: oversized death pose, then squash wider/shorter while fading.
+          slot.sprite.setDisplaySize(slot.state.spriteW * 1.3, slot.state.spriteH * 1.3);
+          slot.sprite.x = 0;
           this.tweens.add({
             targets: slot.sprite,
-            x: 200, y: slot.sprite.y + 250, alpha: 0,
-            duration: 700, ease: 'Sine.easeIn',
-          });
-          const bsX = slot.sprite.scaleX;
-          const bsY = slot.sprite.scaleY;
-          this.tweens.add({
-            targets: slot.sprite,
-            scaleX: { from: bsX * 1.15, to: bsX * 0.8 },
-            scaleY: { from: bsY * 0.85, to: bsY * 1.2 },
-            duration: 140, yoyo: true, repeat: 2, ease: 'Sine.easeInOut',
+            scaleX: slot.sprite.scaleX * 1.45,
+            scaleY: slot.sprite.scaleY * 0.55,
+            alpha: 0,
+            duration: 700,
+            ease: 'Quad.easeIn',
           });
         } else if (slot.state.enemyId === 'a1_blighted_stalker' || slot.state.enemyId === 'a2_zombie') {
           // Decapitation — head is scene-level (absolute coords)
@@ -1506,7 +1526,7 @@ export default class GameScene extends Phaser.Scene {
           // Greater Slime split — dead sprite fades, two small slimes emerge and split apart
           const absX = slot.baseX + slot.sprite.x;
           const absY = slot.baseY + slot.sprite.y;
-          const childW = 160;  // Hollow Slime sprite size
+          const childW = 160;  // Friendly Slime sprite size
           const childH = 240;
 
           // 1. Fade out the dead sprite
@@ -1998,7 +2018,9 @@ export default class GameScene extends Phaser.Scene {
         const atkOffsetY = slot.state.attackSpriteOffsetY ?? slot.state.spriteOffsetY;
         slot.sprite.y = atkOffsetY + slot.state.bottomAlignOffsetY;
 
-        const isLeaper = slot.state.enemyId === 'a1_forest_rat' || slot.state.enemyId === 'a1_hollow_slime';
+        const isLeaper = slot.state.enemyId === 'a1_forest_rat'
+          || slot.state.enemyId === 'a1_rat'
+          || slot.state.enemyId === 'a1_hollow_slime';
         const lungeDist = isLeaper ? slot.state.lungeDist * 2 : slot.state.lungeDist;
         const lungeProps = { x: -lungeDist };
         // Leaper lunge Y: local -100 (container is at _enemyY = _combatY + 40, target ~_combatY - 60)

@@ -59,6 +59,7 @@ export default class ZoneNav {
     this._unsubs.push(on(EVENTS.WORLD_AREA_CHANGED, () => this._refresh()));
     this._unsubs.push(on(EVENTS.SAVE_LOADED, () => this._refresh()));
     this._unsubs.push(on(EVENTS.STATE_CHANGED, () => this._refresh()));
+    this._unsubs.push(on(EVENTS.COMBAT_ENCOUNTER_ENDED, () => this._refresh()));
     this._unsubs.push(on(EVENTS.BOSS_CHALLENGE_READY, () => this._refresh()));
     this._unsubs.push(on(EVENTS.BOSS_DEFEATED, () => this._refresh()));
   }

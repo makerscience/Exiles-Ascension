@@ -5,16 +5,23 @@ import ModalPanel from './ModalPanel.js';
 import { emit, EVENTS } from '../events.js';
 import Store from '../systems/Store.js';
 import UpgradeManager from '../systems/UpgradeManager.js';
+import CombatEngine from '../systems/CombatEngine.js';
+import TerritoryManager from '../systems/TerritoryManager.js';
+import { D, format } from '../systems/BigNum.js';
+import {
+  getBaseDamage, getEffectiveStr, getEffectiveDef, getDodgeChance, getEffectiveMaxHp, getAutoAttackInterval, getGoldMultiplier,
+} from '../systems/ComputedStats.js';
 import { getUpgradesByGroup, getSkillUpgradesByStance, getUpgrade } from '../data/upgrades.js';
 import { FAILED_PURCHASE } from '../data/dialogue.js';
 import { makeButton } from './ui-utils.js';
-import { LAYOUT } from '../config.js';
+import { COMBAT_V2, LAYOUT, STANCES } from '../config.js';
 
 const PANEL_W = 760;
 const PANEL_H = 560;
+const ICON_SIZE = 128;
 
 const STANCE_SECTIONS = {
-  ruin: { label: 'RUIN', color: '#fb923c' },
+  ruin: { label: 'BREAKER', color: '#fb923c' },
   tempest: { label: 'TEMPEST', color: '#60a5fa' },
   fortress: { label: 'FORTRESS', color: '#a1a1aa' },
 };
@@ -27,7 +34,10 @@ export default class UpgradePanel extends ModalPanel {
       height: PANEL_H,
       hotkey: 'U',
       buttonLabel: 'SKILLS [U]',
-      buttonX: LAYOUT.gameArea.x + LAYOUT.gameArea.w / 2 + 80,
+      // 128px to the right of Stats.
+      buttonX: LAYOUT.bottomBar.x + ICON_SIZE / 2 + 128,
+      buttonIconKey: 'icon_skills_button',
+      buttonIconSize: ICON_SIZE,
       buttonColor: '#ffffff',
     });
 
@@ -40,17 +50,25 @@ export default class UpgradePanel extends ModalPanel {
   _getTitle() { return 'SKILLS'; }
 
   _getEvents() {
-    return [EVENTS.UPG_PURCHASED, EVENTS.PROG_LEVEL_UP, EVENTS.STATE_CHANGED, EVENTS.SAVE_LOADED];
+    return [
+      EVENTS.UPG_PURCHASED,
+      EVENTS.PROG_LEVEL_UP,
+      EVENTS.STATE_CHANGED,
+      EVENTS.SAVE_LOADED,
+      EVENTS.COMBAT_TARGET_CHANGED,
+      EVENTS.COMBAT_ENCOUNTER_STARTED,
+      EVENTS.COMBAT_ENCOUNTER_ENDED,
+    ];
   }
 
   _createStaticContent() {
     const tabY = this._cy - PANEL_H / 2 + 50;
-    this._tabStatsBtn = makeButton(this.scene, this._cx - 52, tabY, 'STATS', {
+    this._tabStatsBtn = makeButton(this.scene, this._cx - 62, tabY, 'PASSIVE', {
       onDown: () => this._setTab('stats'),
       fontSize: '12px',
       padding: { x: 10, y: 5 },
     });
-    this._tabSkillsBtn = makeButton(this.scene, this._cx + 16, tabY, 'SKILLS', {
+    this._tabSkillsBtn = makeButton(this.scene, this._cx + 24, tabY, 'ACTIVE', {
       onDown: () => this._setTab('skills'),
       fontSize: '12px',
       padding: { x: 10, y: 5 },
@@ -155,6 +173,16 @@ export default class UpgradePanel extends ModalPanel {
       });
       this._dynamicObjects.push(descText);
 
+      const insight = this._getPassiveUpgradeInsight(upgrade.id);
+      if (insight) {
+        const insightText = this.scene.add.text(startX, y + 30, insight, {
+          fontFamily: 'monospace',
+          fontSize: '9px',
+          color: '#93c5fd',
+        });
+        this._dynamicObjects.push(insightText);
+      }
+
       if (!isMaxed) {
         let costStr = `${cost} Fragments`;
         if (upgrade.currency === 'gold') costStr = `${cost} Gold`;
@@ -176,8 +204,79 @@ export default class UpgradePanel extends ModalPanel {
         this._dynamicObjects.push(maxLabel);
       }
 
-      y += 50;
+      y += insight ? 64 : 50;
     }
+  }
+
+  _getPassiveUpgradeInsight(upgradeId) {
+    if (this._currentTab !== 'stats') return null;
+    switch (upgradeId) {
+      case 'sharpen_blade':
+        return `Current click dmg: ${this._formatCompact(this._getLiveClickDamage())}`;
+      case 'battle_hardening': {
+        const str = getEffectiveStr();
+        const now = COMBAT_V2.playerDamage(str, 0);
+        const next = COMBAT_V2.playerDamage(str + 2, 0);
+        const gain = next - now;
+        return `STR: ${this._formatCompact(str)} | +1 Lv adds +${this._formatCompact(gain)} neutral dmg`;
+      }
+      case 'defensive_drills': {
+        const def = getEffectiveDef();
+        const blocked = def * 0.5;
+        return `DEF: ${this._formatCompact(def)} | Blocks ~${this._formatCompact(blocked)} dmg (pre-floor/pen)`;
+      }
+      case 'agility_drills': {
+        const dodge = getDodgeChance(80) * 100;
+        return `Dodge vs ACC 80: ${dodge.toFixed(1)}%`;
+      }
+      case 'endurance_training':
+        return `Current Max HP: ${format(getEffectiveMaxHp())}`;
+      case 'auto_attack_speed': {
+        const intervalMs = getAutoAttackInterval();
+        const aps = 1000 / Math.max(1, intervalMs);
+        return `Auto rate: ${intervalMs} ms/hit (${aps.toFixed(2)} atk/s)`;
+      }
+      case 'gold_find':
+        return `Current gold mult: x${getGoldMultiplier().toFixed(2)}`;
+      default:
+        return null;
+    }
+  }
+
+  _getLiveClickDamage() {
+    const state = Store.getState();
+    const target = CombatEngine.getTargetMember?.() || null;
+    const enemyDef = target?.defense ?? 0;
+    const raw = COMBAT_V2.playerDamage(getBaseDamage(), enemyDef);
+    const clickMult = UpgradeManager.getMultiplier('clickDamage');
+    const stance = STANCES[state.currentStance] || STANCES.ruin;
+    const vulnerabilityMult = 1 + (target?._smashVulnerabilityMult || 0);
+
+    let damage = D(raw)
+      .times(clickMult)
+      .times(state.prestigeMultiplier)
+      .times(TerritoryManager.getBuffMultiplier('baseDamage'))
+      .times(stance.damageMult)
+      .times(vulnerabilityMult)
+      .times(COMBAT_V2.clickDamageScalar);
+
+    if (target?.armor?.reduction) {
+      const shred = target?._armorShredPercent || 0;
+      const reduction = Math.max(0, target.armor.reduction * (1 - shred));
+      const mult = Math.max(0, 1 - reduction);
+      damage = D(Math.max(1, damage.times(mult).floor().toNumber()));
+    }
+
+    return damage.toNumber();
+  }
+
+  _formatCompact(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '0';
+    if (Math.abs(n) >= 1000) return format(D(n));
+    if (Math.abs(n) >= 100) return Math.round(n).toString();
+    if (Math.abs(n) >= 10) return n.toFixed(1).replace(/\.0$/, '');
+    return n.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
   }
 
   _renderSkillSection(stanceId, startX, startY) {

@@ -11,6 +11,7 @@ import { format } from '../systems/BigNum.js';
 
 const PANEL_W = 720;
 const PANEL_H = 480;
+const ICON_SIZE = 128;
 
 export default class StatsPanel extends ModalPanel {
   constructor(scene) {
@@ -20,7 +21,10 @@ export default class StatsPanel extends ModalPanel {
       height: PANEL_H,
       hotkey: 'C',
       buttonLabel: 'STATS [C]',
-      buttonX: LAYOUT.gameArea.x + LAYOUT.gameArea.w / 2 + 200,
+      // Left-most bottom-bar icon.
+      buttonX: LAYOUT.bottomBar.x + ICON_SIZE / 2,
+      buttonIconKey: 'icon_stats_button',
+      buttonIconSize: ICON_SIZE,
       buttonColor: '#ffffff',
     });
   }

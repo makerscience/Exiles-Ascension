@@ -65,6 +65,19 @@ const CHARGE_ATTACK_DEFAULT_DAMAGE_MULT = 4.0;
 const CHARGE_ATTACK_DEFAULT_CAST_MS = 2500;
 const CHARGE_ATTACK_DEFAULT_COOLDOWN_MS = 15000;
 
+const AREA1_SLIME_BASE_VARIANTS = [
+  { name: 'Friendly Slime', defaultKey: 'slime001_default' },
+  { name: 'Frowny Slime', defaultKey: 'slime_frowny_default' },
+  { name: 'Silly Slime', defaultKey: 'slime_silly_default' },
+  { name: 'Scared Slime', defaultKey: 'slime_scared_default' },
+  { name: 'Worried Slime', defaultKey: 'slime_worried_default' },
+];
+
+function pickOne(items) {
+  if (!Array.isArray(items) || items.length === 0) return null;
+  return items[Math.floor(Math.random() * items.length)] ?? null;
+}
+
 const CombatEngine = {
   init() {
     // Initialize BossManager
@@ -253,6 +266,20 @@ const CombatEngine = {
       corruption: enemyData.corruption ?? 0,
       summon: opts.isAdd ? null : summon,
       chargeAttack,
+      noAttack: !!enemyData.noAttack,
+      sprites: enemyData.sprites ?? null,
+      spriteSize: enemyData.spriteSize ?? null,
+      spriteOffsetY: enemyData.spriteOffsetY ?? 0,
+      nameplateOffsetY: enemyData.nameplateOffsetY ?? 0,
+      shadowOffsetY: enemyData.shadowOffsetY ?? 0,
+      lungeDistance: enemyData.lungeDistance ?? 20,
+      attackSpriteScale: enemyData.attackSpriteScale ?? 1,
+      attackSpriteOffsetX: enemyData.attackSpriteOffsetX ?? 0,
+      attackSpriteOffsetY: enemyData.attackSpriteOffsetY ?? null,
+      reactionSpriteScale: enemyData.reactionSpriteScale ?? 1,
+      spriteTint: enemyData.spriteTint ?? null,
+      spriteSpreadBonus: enemyData.spriteSpreadBonus ?? 0,
+      chargeArmor: enemyData.chargeArmor ?? 0,
       splitOnDeath: enemyData.splitOnDeath ?? null,
       _armorShredPercent: 0,
       _armorBreakTimerId: null,
@@ -322,6 +349,20 @@ const CombatEngine = {
       baseEnemyId: member.baseEnemyId ?? null,
       isAdd: member.isAdd || false,
       summonerId: member.summonerId ?? null,
+      noAttack: member.noAttack ?? false,
+      sprites: member.sprites ?? null,
+      spriteSize: member.spriteSize ?? null,
+      spriteOffsetY: member.spriteOffsetY ?? 0,
+      nameplateOffsetY: member.nameplateOffsetY ?? 0,
+      shadowOffsetY: member.shadowOffsetY ?? 0,
+      lungeDistance: member.lungeDistance ?? 20,
+      attackSpriteScale: member.attackSpriteScale ?? 1,
+      attackSpriteOffsetX: member.attackSpriteOffsetX ?? 0,
+      attackSpriteOffsetY: member.attackSpriteOffsetY ?? null,
+      reactionSpriteScale: member.reactionSpriteScale ?? 1,
+      spriteTint: member.spriteTint ?? null,
+      spriteSpreadBonus: member.spriteSpreadBonus ?? 0,
+      chargeArmor: member.chargeArmor ?? 0,
     };
   },
 
@@ -363,13 +404,15 @@ const CombatEngine = {
    *  staggerIndex offsets the first attack so grouped enemies don't all swing at once. */
   _registerMemberTimers(member, staggerIndex = 0) {
     if (!encounter) return;
-    const speed = member.attackSpeed;
-    const interval = Math.max(400, Math.floor(COMBAT_V2.baseAttackIntervalMs / speed));
-    const atkKey = `enc:${encounter.id}:atk:${member.instanceId}`;
-    // Stagger: each subsequent enemy delays its first attack by a fraction of the interval
-    const staggerOffset = staggerIndex > 0 ? -Math.floor(interval * staggerIndex / encounter.members.length) : 0;
-    TimeEngine.register(atkKey, () => CombatEngine.enemyAttack(member.instanceId), interval, true, staggerOffset);
-    encounter.activeTimerIds.add(atkKey);
+    if (!member.noAttack) {
+      const speed = member.attackSpeed;
+      const interval = Math.max(400, Math.floor(COMBAT_V2.baseAttackIntervalMs / speed));
+      const atkKey = `enc:${encounter.id}:atk:${member.instanceId}`;
+      // Stagger: each subsequent enemy delays its first attack by a fraction of the interval
+      const staggerOffset = staggerIndex > 0 ? -Math.floor(interval * staggerIndex / encounter.members.length) : 0;
+      TimeEngine.register(atkKey, () => CombatEngine.enemyAttack(member.instanceId), interval, true, staggerOffset);
+      encounter.activeTimerIds.add(atkKey);
+    }
 
     if (member.dot) {
       const dotKey = `enc:${encounter.id}:dot:${member.instanceId}`;
@@ -496,25 +539,72 @@ const CombatEngine = {
   },
 
   _buildScaledEnemyForCurrentZone(enemyId) {
-    const enemyTemplate = getEnemyById(enemyId);
-    if (!enemyTemplate) return null;
-
     const state = Store.getState();
+    let enemyTemplate = getEnemyById(enemyId);
+    if (!enemyTemplate) return null;
+    enemyTemplate = CombatEngine._resolveArea1SlimeVariant(enemyTemplate, state);
     const zone = state.currentZone;
     const areaData = getArea(state.currentArea);
     const globalZone = areaData ? areaData.zoneStart + zone - 1 : zone;
     const atkScale = getZoneScaling(zone, 'atk');
     const eb = (stat) => getEnemyBias(enemyTemplate.id, stat);
+    const hpMult = enemyTemplate._variantHpMult ?? 1;
+    const rewardMult = enemyTemplate._variantRewardMult ?? 1;
     return {
       ...enemyTemplate,
-      hp: D(enemyTemplate.hp).times(getZoneScaling(zone, 'hp') * getZoneBias(globalZone, 'hp') * eb('hp')).floor().toString(),
+      hp: D(enemyTemplate.hp).times(getZoneScaling(zone, 'hp') * getZoneBias(globalZone, 'hp') * eb('hp') * hpMult).floor().toString(),
       attack: Math.floor(enemyTemplate.attack * atkScale * getZoneBias(globalZone, 'atk') * eb('atk')),
       defense: Math.floor((enemyTemplate.defense || 0) * getZoneBias(globalZone, 'def') * eb('def')),
       attackSpeed: (enemyTemplate.attackSpeed ?? 1) * getZoneBias(globalZone, 'speed') * eb('speed'),
-      goldDrop: D(enemyTemplate.goldDrop).times(getZoneScaling(zone, 'gold') * getZoneBias(globalZone, 'gold') * eb('gold')).floor().toString(),
-      xpDrop: D(enemyTemplate.xpDrop).times(getZoneScaling(zone, 'xp') * getZoneBias(globalZone, 'xp') * eb('xp')).floor().toString(),
+      goldDrop: D(enemyTemplate.goldDrop).times(getZoneScaling(zone, 'gold') * getZoneBias(globalZone, 'gold') * eb('gold') * rewardMult).floor().toString(),
+      xpDrop: D(enemyTemplate.xpDrop).times(getZoneScaling(zone, 'xp') * getZoneBias(globalZone, 'xp') * eb('xp') * rewardMult).floor().toString(),
       regen: enemyTemplate.regen ? Math.floor(enemyTemplate.regen * atkScale * getZoneBias(globalZone, 'regen') * eb('regen')) : 0,
       thorns: enemyTemplate.thorns ? Math.floor(enemyTemplate.thorns * atkScale * getZoneBias(globalZone, 'atk') * eb('atk')) : 0,
+    };
+  },
+
+  _resolveArea1SlimeVariant(enemyTemplate, state) {
+    if (!enemyTemplate || enemyTemplate.id !== 'a1_slime' || state.currentArea !== 1) {
+      return enemyTemplate;
+    }
+
+    const zone = state.currentZone;
+    if (zone <= 1) {
+      return {
+        ...enemyTemplate,
+        name: 'Friendly Slime',
+        noAttack: false,
+        _variantHpMult: 1,
+        _variantRewardMult: 1,
+        sprites: {
+          ...enemyTemplate.sprites,
+          default: 'slime001_default',
+        },
+      };
+    }
+
+    const variants = [...AREA1_SLIME_BASE_VARIANTS];
+    if (zone >= 4 && zone <= 5) {
+      variants.push({
+        name: 'George',
+        defaultKey: 'slime_george_default',
+        noAttack: true,
+        hpMult: 2,
+        rewardMult: 2,
+      });
+    }
+
+    const variant = pickOne(variants) || AREA1_SLIME_BASE_VARIANTS[0];
+    return {
+      ...enemyTemplate,
+      name: variant.name,
+      noAttack: !!variant.noAttack,
+      _variantHpMult: variant.hpMult ?? 1,
+      _variantRewardMult: variant.rewardMult ?? 1,
+      sprites: {
+        ...enemyTemplate.sprites,
+        default: variant.defaultKey,
+      },
     };
   },
 
@@ -734,6 +824,7 @@ const CombatEngine = {
       encounter.activeTimerIds.delete(recoverKey);
       if (!member?.alive) return;
       member._interruptStunTimerId = null;
+      if (member.noAttack) return;
 
       const interval = Math.max(400, Math.floor(COMBAT_V2.baseAttackIntervalMs / member.attackSpeed));
       TimeEngine.register(attackKey, () => CombatEngine.enemyAttack(member.instanceId), interval, true);
@@ -912,41 +1003,18 @@ const CombatEngine = {
     const state = Store.getState();
     const area = state.currentArea;
     const zone = state.currentZone;
-
     // Pick a weighted random encounter template for this area+zone
     const encTemplate = pickRandomEncounter(area, zone);
     if (!encTemplate) return;
-
-    // Compute global zone for per-zone bias lookups
-    const areaData = getArea(area);
-    const globalZone = areaData ? areaData.zoneStart + zone - 1 : zone;
-
-    // Build members array — scale each member's stats by zone
+    // Build members array using shared zone scaler (includes runtime variants).
     const members = encTemplate.members.map((memberId, slotIndex) => {
-      const enemyTemplate = getEnemyById(memberId);
-      if (!enemyTemplate) return null;
-
-      const atkScale = getZoneScaling(zone, 'atk');
-      const eb = (stat) => getEnemyBias(enemyTemplate.id, stat);
-      const scaledData = {
-        ...enemyTemplate,
-        hp:          D(enemyTemplate.hp).times(getZoneScaling(zone, 'hp') * getZoneBias(globalZone, 'hp') * eb('hp')).floor().toString(),
-        attack:      Math.floor(enemyTemplate.attack * atkScale * getZoneBias(globalZone, 'atk') * eb('atk')),
-        defense:     Math.floor((enemyTemplate.defense || 0) * getZoneBias(globalZone, 'def') * eb('def')),
-        attackSpeed: (enemyTemplate.attackSpeed ?? 1) * getZoneBias(globalZone, 'speed') * eb('speed'),
-        goldDrop:    D(enemyTemplate.goldDrop).times(getZoneScaling(zone, 'gold') * getZoneBias(globalZone, 'gold') * eb('gold')).floor().toString(),
-        xpDrop:      D(enemyTemplate.xpDrop).times(getZoneScaling(zone, 'xp') * getZoneBias(globalZone, 'xp') * eb('xp')).floor().toString(),
-        regen:       enemyTemplate.regen ? Math.floor(enemyTemplate.regen * atkScale * getZoneBias(globalZone, 'regen') * eb('regen')) : 0,
-        thorns:      enemyTemplate.thorns ? Math.floor(enemyTemplate.thorns * atkScale * getZoneBias(globalZone, 'atk') * eb('atk')) : 0,
-      };
-
+      const scaledData = CombatEngine._buildScaledEnemyForCurrentZone(memberId);
+      if (!scaledData) return null;
       return CombatEngine._buildMember(scaledData, slotIndex, {
         attackSpeedMult: encTemplate.attackSpeedMult,
       });
     }).filter(Boolean);
-
     if (members.length === 0) return;
-
     const enc = CombatEngine._createEncounterRuntime(members, encTemplate, 'normal');
     CombatEngine._startEncounter(enc);
   },
@@ -1198,7 +1266,7 @@ const CombatEngine = {
     member.attackSpeed *= member.enrage.speedMult;
 
     // Re-register attack timer with boosted speed
-    if (encounter) {
+    if (encounter && !member.noAttack) {
       const atkKey = `enc:${encounter.id}:atk:${member.instanceId}`;
       const interval = Math.max(400, Math.floor(COMBAT_V2.baseAttackIntervalMs / member.attackSpeed));
       TimeEngine.register(atkKey, () => CombatEngine.enemyAttack(member.instanceId), interval, true);
@@ -1387,7 +1455,7 @@ const CombatEngine = {
     const member = instanceId
       ? CombatEngine.getMemberByInstanceId(instanceId)
       : CombatEngine.getTargetMember();
-    if (!member?.alive) return;
+    if (!member?.alive || member.noAttack) return;
 
     const accuracy = member.accuracy ?? 80;
     const hitChance = getEnemyHitChance(accuracy);
@@ -1596,17 +1664,21 @@ const CombatEngine = {
     // 3. Null state before emitting (prevent stale reads)
     encounter = null;
 
-    // 4. Emit encounter ended
+    // 4. Apply reason-specific state mutations that listeners depend on.
+    if (reason === 'cleared') {
+      const state = Store.getState();
+      Store.incrementZoneClearKills(state.currentArea, state.currentZone);
+    }
+
+    // 5. Emit encounter ended
     emit(EVENTS.COMBAT_ENCOUNTER_ENDED, {
       encounterId: enc.id,
       type: enc.type,
       reason,
     });
 
-    // 5. Reason-specific scheduling
+    // 6. Reason-specific scheduling
     if (reason === 'cleared') {
-      const state = Store.getState();
-      Store.incrementZoneClearKills(state.currentArea, state.currentZone);
       TimeEngine.scheduleOnce('combat:spawnDelay', () => {
         CombatEngine.spawnEnemy();
       }, COMBAT_V2.spawnDelay);
@@ -1620,3 +1692,4 @@ const CombatEngine = {
 };
 
 export default CombatEngine;
+

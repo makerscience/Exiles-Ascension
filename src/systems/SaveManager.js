@@ -19,6 +19,9 @@ const ENHANCEABLE_SLOT_IDS = ['head', 'chest', 'main_hand', 'legs', 'boots', 'gl
 const STANDARD_UPGRADE_IDS = [
   'sharpen_blade',
   'battle_hardening',
+  'defensive_drills',
+  'agility_drills',
+  'endurance_training',
   'auto_attack_speed',
   'gold_find',
   'power_smash_damage',
@@ -31,13 +34,83 @@ function hasParsable(key) {
   try { JSON.parse(raw); return true; } catch { return false; }
 }
 
+function parseCandidate(raw, source) {
+  if (!raw) return null;
+  try {
+    return { data: JSON.parse(raw), source, raw };
+  } catch {
+    return null;
+  }
+}
+
+function isLikelyFreshStart(data) {
+  const level = Number(data?.playerStats?.level ?? 1);
+  const area = Number(data?.currentArea ?? 1);
+  const zone = Number(data?.currentZone ?? 1);
+  const totalKills = Number(data?.totalKills ?? 0);
+  const purchasedCount = Object.keys(data?.purchasedUpgrades || {}).length;
+  const skillPoints = Number(data?.skillPoints ?? 0);
+  const inventoryCount = Object.keys(data?.inventoryStacks || {}).length;
+
+  return level <= 1
+    && area === 1
+    && zone === 1
+    && totalKills <= 0
+    && purchasedCount === 0
+    && skillPoints <= 0
+    && inventoryCount === 0;
+}
+
+function chooseSlotCandidate(primary, backup) {
+  if (primary && backup) {
+    const primaryFresh = isLikelyFreshStart(primary.data);
+    const backupFresh = isLikelyFreshStart(backup.data);
+    if (primaryFresh && !backupFresh) {
+      return { ...backup, preferredByGuard: true };
+    }
+    return { ...primary, preferredByGuard: false };
+  }
+  if (primary) return { ...primary, preferredByGuard: false };
+  if (backup) return { ...backup, preferredByGuard: false };
+  return null;
+}
+
+function readSlotData(slotId) {
+  const primary = parseCandidate(localStorage.getItem(slotKey(slotId)), 'primary');
+  const backup = parseCandidate(localStorage.getItem(slotBackupKey(slotId)), 'backup');
+  return chooseSlotCandidate(primary, backup);
+}
+
 let activeSlot = null;
 let store = null;
 let autosaveTimer = null;
 let boundBeforeUnload = null;
+let boundPageHide = null;
+let boundVisibilityChange = null;
 let saveRequestedUnsub = null;
 let stateChangedUnsub = null;
-let settingsSaveTimer = null;
+let queuedSaveTimer = null;
+let queuedSaveDeadline = 0;
+let saveArmed = false;
+
+const SETTINGS_SAVE_DEBOUNCE_MS = 300;
+const GAMEPLAY_SAVE_DEBOUNCE_MS = 1500;
+
+function queueSave(delayMs) {
+  const clampedDelay = Math.max(0, Math.floor(delayMs || 0));
+  const targetDeadline = Date.now() + clampedDelay;
+  // Keep the earliest queued save; don't delay an already-earlier flush.
+  if (queuedSaveTimer && queuedSaveDeadline <= targetDeadline) return;
+  if (queuedSaveTimer) {
+    clearTimeout(queuedSaveTimer);
+  }
+  queuedSaveDeadline = targetDeadline;
+  queuedSaveTimer = setTimeout(() => {
+    queuedSaveTimer = null;
+    queuedSaveDeadline = 0;
+    SaveManager.save();
+  }, clampedDelay);
+}
 
 /** Migration functions keyed by target schemaVersion.
  *  Fresh save track for the vertical slice — starts at v1, no legacy migrations.
@@ -125,27 +198,45 @@ const SaveManager = {
     if (savedSlot && SLOT_IDS.includes(Number(savedSlot))) {
       activeSlot = Number(savedSlot);
     }
+    saveArmed = false;
+
+    // Bootstrap-load active slot before any autosave can run. This prevents
+    // default in-memory state from overwriting valid slot progress on startup.
+    if (activeSlot) {
+      const loaded = this.load(activeSlot, { emitLoadedEvent: false });
+      if (!loaded) {
+        activeSlot = null;
+        localStorage.removeItem(ACTIVE_SLOT_KEY);
+      }
+    }
 
     // Autosave on interval
     autosaveTimer = setInterval(() => this.save(), SAVE.autosaveInterval);
 
     // Save on page close
     boundBeforeUnload = () => this.save();
+    boundPageHide = () => this.save();
+    boundVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        this.save();
+      }
+    };
     window.addEventListener('beforeunload', boundBeforeUnload);
+    window.addEventListener('pagehide', boundPageHide);
+    document.addEventListener('visibilitychange', boundVisibilityChange);
 
     // Save on explicit request (e.g. after prestige)
     saveRequestedUnsub = on(EVENTS.SAVE_REQUESTED, () => SaveManager.save());
 
-    // Save settings quickly (debounced) so volume changes persist across short sessions.
+    // Save shortly after state changes so dev reload/HMR does not drop recent progress.
     stateChangedUnsub = on(EVENTS.STATE_CHANGED, ({ changedKeys } = {}) => {
-      if (!Array.isArray(changedKeys) || !changedKeys.includes('settings')) return;
-      if (settingsSaveTimer) {
-        clearTimeout(settingsSaveTimer);
+      if (!Array.isArray(changedKeys) || changedKeys.length === 0) return;
+      const settingsOnly = changedKeys.length === 1 && changedKeys[0] === 'settings';
+      if (settingsOnly) {
+        queueSave(SETTINGS_SAVE_DEBOUNCE_MS);
+      } else {
+        queueSave(GAMEPLAY_SAVE_DEBOUNCE_MS);
       }
-      settingsSaveTimer = setTimeout(() => {
-        settingsSaveTimer = null;
-        SaveManager.save();
-      }, 300);
     });
   },
 
@@ -158,6 +249,14 @@ const SaveManager = {
       window.removeEventListener('beforeunload', boundBeforeUnload);
       boundBeforeUnload = null;
     }
+    if (boundPageHide) {
+      window.removeEventListener('pagehide', boundPageHide);
+      boundPageHide = null;
+    }
+    if (boundVisibilityChange) {
+      document.removeEventListener('visibilitychange', boundVisibilityChange);
+      boundVisibilityChange = null;
+    }
     if (saveRequestedUnsub) {
       saveRequestedUnsub();
       saveRequestedUnsub = null;
@@ -166,53 +265,98 @@ const SaveManager = {
       stateChangedUnsub();
       stateChangedUnsub = null;
     }
-    if (settingsSaveTimer) {
-      clearTimeout(settingsSaveTimer);
-      settingsSaveTimer = null;
+    if (queuedSaveTimer) {
+      clearTimeout(queuedSaveTimer);
+      queuedSaveTimer = null;
+      queuedSaveDeadline = 0;
     }
+    saveArmed = false;
     store = null;
     activeSlot = null;
   },
 
   /** Serialize state to localStorage. Rotates current → backup before writing. */
   save() {
-    if (!store || window.__saveWiped || !activeSlot) return;
+    if (!store || window.__saveWiped || !activeSlot || !saveArmed) return;
     const state = store.getState();
     if (!state) return;
-    store.updateTimestamps({ lastSave: Date.now(), lastOnline: Date.now() });
-    const json = JSON.stringify(state);
     const pk = slotKey(activeSlot);
     const bk = slotBackupKey(activeSlot);
     const existing = localStorage.getItem(pk);
+
+    // Safety guard: never overwrite progressed slot data with a suspicious
+    // fresh-start state unless the slot was intentionally cleared first.
+    const existingParsed = parseCandidate(existing, 'primary');
+    if (
+      existingParsed
+      && !isLikelyFreshStart(existingParsed.data)
+      && isLikelyFreshStart(state)
+    ) {
+      console.warn('[SaveManager] Blocked suspicious fresh-state overwrite on active slot', { activeSlot });
+      return;
+    }
+
+    store.updateTimestamps({ lastSave: Date.now(), lastOnline: Date.now() });
+    const json = JSON.stringify(state);
     if (existing) localStorage.setItem(bk, existing);
     localStorage.setItem(pk, json);
     emit(EVENTS.SAVE_COMPLETED, {});
   },
 
-  /** Load from localStorage. Falls back to backup if primary is corrupt. */
-  load(slotId) {
-    if (!store) return;
+  /** Load from localStorage. Falls back to backup if primary is corrupt. Returns true on success. */
+  load(slotId, opts = {}) {
+    if (!store) return false;
     const pk = slotKey(slotId);
     const bk = slotBackupKey(slotId);
-    let raw = localStorage.getItem(pk);
-    let data = null;
-    if (raw) {
-      try { data = JSON.parse(raw); }
-      catch { emit(EVENTS.SAVE_CORRUPT, { source: 'primary' }); data = null; }
-    }
+    const primaryRaw = localStorage.getItem(pk);
+    const backupRaw = localStorage.getItem(bk);
+    let primaryCorrupt = false;
+    let backupCorrupt = false;
+    const primary = parseCandidate(primaryRaw, 'primary');
+    const backup = parseCandidate(backupRaw, 'backup');
+    if (primaryRaw && !primary) primaryCorrupt = true;
+    if (backupRaw && !backup) backupCorrupt = true;
+
+    const chosen = chooseSlotCandidate(primary, backup);
+    let data = chosen?.data ?? null;
+    const source = chosen?.source ?? null;
+    const preferredByGuard = !!chosen?.preferredByGuard;
+
     if (!data) {
-      raw = localStorage.getItem(bk);
-      if (raw) {
-        try { data = JSON.parse(raw); emit(EVENTS.SAVE_CORRUPT, { source: 'primary', recoveredFrom: 'backup' }); }
-        catch { emit(EVENTS.SAVE_CORRUPT, { source: 'both' }); return; }
+      if (primaryCorrupt && backupCorrupt) {
+        emit(EVENTS.SAVE_CORRUPT, { source: 'both' });
+      } else if (primaryCorrupt) {
+        emit(EVENTS.SAVE_CORRUPT, { source: 'primary' });
+      } else if (backupCorrupt) {
+        emit(EVENTS.SAVE_CORRUPT, { source: 'backup' });
       }
+      return false;
     }
-    if (!data) return;
-    data = migrate(data);
-    store.loadState(data);
+
+    try {
+      data = migrate(data);
+      store.loadState(data);
+    } catch {
+      emit(EVENTS.SAVE_CORRUPT, { source: source || 'unknown', stage: 'hydrate' });
+      return false;
+    }
+
+    // Self-heal slot when backup was used so future loads can use primary again.
+    if (source === 'backup' && backupRaw) {
+      localStorage.setItem(pk, backupRaw);
+      emit(EVENTS.SAVE_CORRUPT, {
+        source: preferredByGuard ? 'stale_primary' : 'primary',
+        recoveredFrom: 'backup',
+      });
+    }
+
     activeSlot = slotId;
+    saveArmed = true;
     localStorage.setItem(ACTIVE_SLOT_KEY, String(slotId));
-    emit(EVENTS.SAVE_LOADED, {});
+    if (opts.emitLoadedEvent !== false) {
+      emit(EVENTS.SAVE_LOADED, {});
+    }
+    return true;
   },
 
   /** True when a parseable save exists. Optionally check a specific slot. */
@@ -227,6 +371,11 @@ const SaveManager = {
   clearSaveForNewGame(slotId) {
     localStorage.removeItem(slotKey(slotId));
     localStorage.removeItem(slotBackupKey(slotId));
+    if (activeSlot === slotId) {
+      activeSlot = null;
+      saveArmed = false;
+      localStorage.removeItem(ACTIVE_SLOT_KEY);
+    }
   },
 
   /** Wipe all save slots. Dev/debug tool.
@@ -238,24 +387,24 @@ const SaveManager = {
       localStorage.removeItem(slotBackupKey(id));
     }
     localStorage.removeItem(ACTIVE_SLOT_KEY);
+    activeSlot = null;
+    saveArmed = false;
   },
 
   /** Return a brief summary of a slot's save data (for UI). */
   getSlotSummary(slotId) {
-    const raw = localStorage.getItem(slotKey(slotId));
-    if (!raw) return null;
-    try {
-      const data = JSON.parse(raw);
-      return {
-        level: data?.playerStats?.level ?? 1,
-        area: data?.currentArea ?? 1,
-        zone: data?.currentZone ?? 1,
-      };
-    } catch { return null; }
+    const parsed = readSlotData(slotId);
+    if (!parsed) return null;
+    return {
+      level: parsed.data?.playerStats?.level ?? 1,
+      area: parsed.data?.currentArea ?? 1,
+      zone: parsed.data?.currentZone ?? 1,
+    };
   },
 
   setActiveSlot(slotId) {
     activeSlot = slotId;
+    saveArmed = true;
     localStorage.setItem(ACTIVE_SLOT_KEY, String(slotId));
   },
 

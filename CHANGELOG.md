@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-03-01 - Area 1 Slime Variant + Drink UI Icon Pass
+- **Area 1 slime variant runtime:** `a1_slime` now supports zone-aware default sprite/name variants: zone 1 forces Friendly Slime; zones 2-3 randomize Friendly/Frowny/Silly/Scared/Worried; zones 4-5 include George at equal spawn chance
+- **George tuning:** George is non-attacking (`noAttack`) with `2x HP` and `2x XP/Gold` rewards
+- **Zone 1 mini-boss replacement:** `boss_a1z5_the_hollow` is now **Unfriendly Slime** with slime reaction/attack/dead poses, custom default sprite, and updated stat profile
+- **Boss death visual parity:** Unfriendly Slime now uses the same slime compress-and-fade death animation sequence as friendly slimes
+- **Encounter rendering overrides:** `GameScene` now respects per-member payload sprite/size/offset/tint overrides so runtime enemy variants render correctly
+- **No-attack safety path:** encounter timer registration/recovery and enemy attack execution now consistently honor `noAttack` members
+- **Kill progression ordering fix:** zone-clear kill increments now occur before `COMBAT_ENCOUNTER_ENDED` emission to prevent missed first-kill progression in dependent listeners
+- **Waterskin flavor update:** `a1_rotfang_waterskin` renamed to `slimy waterskin` with updated descriptive text
+- **Drink button rework:** switched from text button to `DrinkIcon` sprite button; preload/downscale wiring added; cooldown now uses dark fill-only feedback (no numeric countdown), resized to match Flurry icon scale, and re-anchored above Stats with a leftward offset
+
 ## 2026-02-28 - Stance/Skill Icon + Smash VFX Pass
 - **Stance icon assets refreshed:** Ruin/Fortress stance icons now load `RuinIcon2` and `Fortressstance2`; added dedicated skill icons for Smash and Bulwark
 - **Stance switcher simplification:** removed `STANCE SELECTOR` label and ring background; switcher is now icon-only, moved slightly upward, with hover-scale feedback

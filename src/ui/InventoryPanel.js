@@ -19,6 +19,7 @@ import { getActiveArmorSet } from '../config/playerSprites.js';
 
 const PANEL_W = 880;
 const PANEL_H = 560;
+const ICON_SIZE = 128;
 
 // Grid constants (inventory grid, right side)
 const GRID_COLS = 5;
@@ -53,7 +54,10 @@ export default class InventoryPanel extends ModalPanel {
       height: PANEL_H,
       hotkey: 'I',
       buttonLabel: 'BAG [I]',
-      buttonX: LAYOUT.gameArea.x + LAYOUT.gameArea.w / 2 - 80,
+      // 128px past the right edge of the Skills icon (center-to-center +256).
+      buttonX: LAYOUT.bottomBar.x + ICON_SIZE / 2 + 128 + 256,
+      buttonIconKey: 'icon_inventory_button',
+      buttonIconSize: ICON_SIZE,
       buttonColor: '#ffffff',
     });
 

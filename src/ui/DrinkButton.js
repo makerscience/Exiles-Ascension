@@ -1,4 +1,4 @@
-// DrinkButton — "DRINK" button that heals player when a waterskin is equipped.
+// DrinkButton - icon button that heals player when a waterskin is equipped.
 // Visible only when a waterskin is equipped. Cooldown driven by the equipped item's cooldownMs.
 
 import Store from '../systems/Store.js';
@@ -8,40 +8,51 @@ import { on, emit, EVENTS } from '../events.js';
 import { LAYOUT } from '../config.js';
 import { snapPx } from './ui-utils.js';
 
+const ICON_SIZE = 100;
+const STATS_ICON_SIZE = 128;
+const HOVER_SCALE = 1.05;
+const COOLDOWN_DARK_ALPHA = 0.72;
+
 export default class DrinkButton {
   constructor(scene) {
     this.scene = scene;
     this._unsubs = [];
+    this._cooldownStart = 0;
     this._cooldownEnd = 0;
+    this._cooldownMs = 0;
     this._cooldownTimer = null;
 
-    const ga = LAYOUT.gameArea;
-    const btnX = snapPx(ga.x + 20);
-    const btnY = snapPx(ga.y + ga.h - 10);
+    const statsBtnX = LAYOUT.bottomBar.x + STATS_ICON_SIZE / 2;
+    const statsBtnY = LAYOUT.bottomBar.y + LAYOUT.bottomBar.h / 2;
+    const btnX = snapPx(statsBtnX - 10);
+    const btnY = snapPx(statsBtnY - STATS_ICON_SIZE / 2 - 10);
 
-    this._btn = scene.add.text(btnX, btnY, 'DRINK', {
-      fontFamily: 'monospace',
-      fontSize: '14px',
-      color: '#ffffff',
-      fontStyle: 'bold',
-      backgroundColor: '#1e3a5f',
-      padding: { x: 16, y: 8 },
-      stroke: '#000000',
-      strokeThickness: 2,
-    }).setOrigin(0, 1).setInteractive({ useHandCursor: true });
+    this._container = scene.add.container(btnX, btnY);
+    this._container.setDepth(10).setVisible(false);
 
-    this._btn.setVisible(false);
-    this._btn.setDepth(10);
+    this._icon = scene.add.image(0, 0, 'icon_drink_button');
+    this._icon.setDisplaySize(ICON_SIZE, ICON_SIZE);
+    this._icon.setInteractive({ useHandCursor: true });
+    this._baseScaleX = this._icon.scaleX;
+    this._baseScaleY = this._icon.scaleY;
 
-    this._btn.on('pointerdown', () => this._onDrink());
-    this._btn.on('pointerover', () => {
-      if (this._btn.visible && !this._isOnCooldown()) {
-        this._btn.setStyle({ backgroundColor: '#2d5a8a' });
+    this._cooldownOverlay = scene.add.image(0, 0, 'icon_drink_button');
+    this._cooldownOverlay.setDisplaySize(ICON_SIZE, ICON_SIZE);
+    this._cooldownOverlay.setTint(0x000000);
+    this._cooldownOverlay.setAlpha(COOLDOWN_DARK_ALPHA);
+    this._cooldownOverlay.setVisible(false);
+
+    this._container.add([this._icon, this._cooldownOverlay]);
+
+    this._icon.on('pointerdown', () => this._onDrink());
+    this._icon.on('pointerover', () => {
+      if (this._container.visible && !this._isOnCooldown()) {
+        this._icon.setScale(this._baseScaleX * HOVER_SCALE, this._baseScaleY * HOVER_SCALE);
       }
     });
-    this._btn.on('pointerout', () => {
-      if (this._btn.visible && !this._isOnCooldown()) {
-        this._btn.setStyle({ backgroundColor: '#1e3a5f' });
+    this._icon.on('pointerout', () => {
+      if (this._container.visible && !this._isOnCooldown()) {
+        this._icon.setScale(this._baseScaleX, this._baseScaleY);
       }
     });
 
@@ -66,13 +77,10 @@ export default class DrinkButton {
   _refresh() {
     const item = this._getEquippedWaterskin();
     if (item) {
-      this._btn.setVisible(true);
-      if (!this._isOnCooldown()) {
-        this._btn.setText('DRINK');
-        this._btn.setStyle({ backgroundColor: '#1e3a5f', color: '#ffffff' });
-      }
+      this._container.setVisible(true);
+      this._updateCooldownVisual();
     } else {
-      this._btn.setVisible(false);
+      this._container.setVisible(false);
       this._stopCooldownTimer();
     }
   }
@@ -92,32 +100,46 @@ export default class DrinkButton {
 
     emit(EVENTS.WATERSKIN_USED, { healAmount, itemId: item.id });
 
-    this._cooldownEnd = Date.now() + cooldownMs;
+    this._cooldownMs = cooldownMs;
+    this._cooldownStart = Date.now();
+    this._cooldownEnd = this._cooldownStart + this._cooldownMs;
     this._startCooldownTimer();
   }
 
   _startCooldownTimer() {
     this._stopCooldownTimer();
-    this._btn.setStyle({ backgroundColor: '#333333', color: '#888888' });
-    this._updateCooldownText();
+    this._updateCooldownVisual();
 
     this._cooldownTimer = this.scene.time.addEvent({
-      delay: 500,
+      delay: 100,
       loop: true,
-      callback: () => this._updateCooldownText(),
+      callback: () => this._updateCooldownVisual(),
     });
   }
 
-  _updateCooldownText() {
+  _updateCooldownVisual() {
     const remaining = this._cooldownEnd - Date.now();
     if (remaining <= 0) {
       this._stopCooldownTimer();
-      this._btn.setText('DRINK');
-      this._btn.setStyle({ backgroundColor: '#1e3a5f', color: '#ffffff' });
+      this._cooldownOverlay.setVisible(false);
+      this._cooldownOverlay.setCrop();
+      this._cooldownOverlay.setAlpha(COOLDOWN_DARK_ALPHA);
+      this._icon.setScale(this._baseScaleX, this._baseScaleY);
       return;
     }
-    const secs = Math.ceil(remaining / 1000);
-    this._btn.setText(`DRINK (${secs}s)`);
+    const ratio = Math.max(0, Math.min(1, this._cooldownMs > 0 ? remaining / this._cooldownMs : 0));
+    const frameW = this._cooldownOverlay.frame.cutWidth;
+    const frameH = this._cooldownOverlay.frame.cutHeight;
+    const darkH = Math.round(frameH * ratio);
+    if (darkH <= 0) {
+      this._cooldownOverlay.setVisible(false);
+      this._cooldownOverlay.setCrop(0, 0, frameW, 0);
+    } else {
+      this._cooldownOverlay.setVisible(true);
+      this._cooldownOverlay.setAlpha(COOLDOWN_DARK_ALPHA);
+      this._cooldownOverlay.setCrop(0, 0, frameW, darkH);
+    }
+
   }
 
   _stopCooldownTimer() {
@@ -128,8 +150,13 @@ export default class DrinkButton {
   }
 
   _resetCooldown() {
+    this._cooldownStart = 0;
     this._cooldownEnd = 0;
+    this._cooldownMs = 0;
     this._stopCooldownTimer();
+    this._cooldownOverlay.setVisible(false);
+    this._cooldownOverlay.setCrop();
+    this._icon.setScale(this._baseScaleX, this._baseScaleY);
     this._refresh();
   }
 
@@ -138,12 +165,20 @@ export default class DrinkButton {
   }
 
   hide() {
-    this._btn.setVisible(false);
+    this._container.setVisible(false);
+  }
+
+  setPosition(x, y) {
+    this._container.setPosition(snapPx(x), snapPx(y));
   }
 
   destroy() {
     for (const unsub of this._unsubs) unsub();
     this._unsubs = [];
     this._stopCooldownTimer();
+    if (this._container) {
+      this._container.destroy();
+      this._container = null;
+    }
   }
 }

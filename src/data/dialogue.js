@@ -6,7 +6,7 @@
 export const FIRST_LAUNCH = [
   'Welcome to the game. Please try not to die immediately.',
   "Primer: Kill enemies, level up, upgrade skills, equip loot or sell it. I'm not your dad. Do what you want. Just keep pushing to higher and higher zones to see what you're made of. Maybe something cool will happen.",
-  'Stances decide the pace of combat. Click the big circle in the upper left to change your stance. Ruin stance provides burst damage, Tempest shreds enemies, and Fortress holds the line. Swap between them as needed.',
+  'Stances decide the pace of combat. Click the big circle in the upper left to change your stance. Breaker stance provides burst damage, Tempest shreds enemies, and Fortress holds the line. Swap between them as needed.',
 ];
 
 // ── One-shot triggers (flag-gated) ─────────────────────────────────
@@ -33,7 +33,7 @@ export const FIRST_SELL = [
 
 export const UNLOCK_ARMOR_BREAK = [
   'Secondary slot unlocked: ARMOR BRK.',
-  'Ruin stance now has a trait counter. Use it against armored targets.',
+  'Breaker stance now has a trait counter. Use it against armored targets.',
 ];
 
 export const UNLOCK_CLEANSE = [
@@ -47,7 +47,7 @@ export const UNLOCK_INTERRUPT = [
 ];
 
 export const FIRST_STANCE_SWITCH = [
-  'Stance swap confirmed. Ruin hits hardest, Tempest attacks fastest, Fortress absorbs punishment.',
+  'Stance swap confirmed. Breaker hits hardest, Tempest attacks fastest, Fortress absorbs punishment.',
 ];
 
 export const FIRST_THORNS_HIT = [
@@ -59,7 +59,7 @@ export const FIRST_EVASION_DODGE = [
 ];
 
 export const FIRST_REGEN_HEAL = [
-  'Enemy regeneration detected. Ruin burst and ARMOR BRK help punch through sustain.',
+  'Enemy regeneration detected. Breaker burst and ARMOR BRK help punch through sustain.',
 ];
 
 // ── Area entrances (one-shot per area) ─────────────────────────────

@@ -182,7 +182,7 @@ export const LOOT_V2 = {
 
 export const STANCES = {
   tempest:  { id: 'tempest',  label: 'Tempest',  atkSpeedMult: 1.8, damageMult: 0.6, damageReduction: 0.0 },
-  ruin:     { id: 'ruin',     label: 'Ruin',     atkSpeedMult: 0.5, damageMult: 2.0, damageReduction: 0.0 },
+  ruin:     { id: 'ruin',     label: 'Breaker',  atkSpeedMult: 0.5, damageMult: 2.0, damageReduction: 0.0 },
   fortress: { id: 'fortress', label: 'Fortress', atkSpeedMult: 0.8, damageMult: 0.8, damageReduction: 0.5 },
 };
 

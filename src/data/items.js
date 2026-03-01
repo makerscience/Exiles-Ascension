@@ -687,8 +687,8 @@ const ITEMS = {
   // ── Waterskin ────────────────────────────────────────────────────
   a1_rotfang_waterskin: {
     id: 'a1_rotfang_waterskin',
-    name: "Rotfang's Waterskin",
-    description: 'Leather waterskin salvaged from the alpha hound den. The water tastes faintly of iron.',
+    name: 'slimy waterskin',
+    description: 'A slimy waterskin that seems to regenerate itself after a few seconds and heal you when you drink it. It tastes a bit sour, but not bad.',
     abbr: 'RfWS',
     thumbnail: 'waterskin001',
     slot: 'waterskin',

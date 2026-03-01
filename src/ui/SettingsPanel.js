@@ -18,6 +18,8 @@ export default class SettingsPanel extends ModalPanel {
       hotkey: 'ESC',
       buttonLabel: 'SETTINGS',
       buttonX: LAYOUT.bottomBar.x + LAYOUT.bottomBar.w - 60,
+      buttonIconKey: 'icon_settings_button',
+      buttonIconSize: 128,
       buttonColor: '#a1a1aa',
       borderColor: 0xa1a1aa,
       titleColor: '#a1a1aa',

@@ -88,3 +88,23 @@ if (import.meta.env.DEV) {
   };
   if (FEATURES.territoryEnabled) window.TerritoryManager = TerritoryManager;
 }
+
+// In dev HMR flows, flush save state before module disposal.
+if (import.meta.hot) {
+  let forcingFullReload = false;
+
+  // Some hot updates can partially swap singleton modules and reset runtime state.
+  // Force a full reload (after save) so progress survives code edits consistently.
+  import.meta.hot.on('vite:beforeUpdate', () => {
+    if (forcingFullReload) return;
+    forcingFullReload = true;
+    try { SaveManager.save(); } catch {}
+    window.location.reload();
+  });
+
+  import.meta.hot.dispose(() => {
+    try { SaveManager.save(); } catch {}
+    try { SaveManager.destroy(); } catch {}
+    try { TimeEngine.destroy(); } catch {}
+  });
+}

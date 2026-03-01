@@ -1,4 +1,4 @@
-// SmashButton - icon button for the Ruin Smash active ability.
+// SmashButton - icon button for the Breaker Smash active ability.
 // Visible when stance is 'ruin'. Cooldown driven by tier upgrades.
 
 import CombatEngine from '../systems/CombatEngine.js';
