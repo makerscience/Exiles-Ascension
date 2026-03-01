@@ -1039,15 +1039,28 @@ export default class GameScene extends Phaser.Scene {
     // All enemies render at full opacity — no dimming for non-targets
   }
 
+  _isDuoSecondSlotSlime(enemyId) {
+    return enemyId === 'a1_slime';
+  }
+
+  _getEncounterSlotYOffset(slotIndex, count, enemyId) {
+    if (count === 2 && slotIndex === 1 && this._isDuoSecondSlotSlime(enemyId)) {
+      return 20;
+    }
+    return 0;
+  }
+
   _reflowEncounterSlots(layoutCount) {
-    const positions = this._getSlotPositions(Math.max(1, layoutCount));
+    const count = Math.max(1, layoutCount);
+    const positions = this._getSlotPositions(count);
     for (let i = 0; i < this._enemySlots.length; i++) {
       const slot = this._enemySlots[i];
       if (!slot.state.instanceId) continue;
       if (!positions[i]) continue;
-      slot.container.setPosition(positions[i].x, positions[i].y);
+      const yOffset = this._getEncounterSlotYOffset(i, count, slot.state.enemyId);
+      slot.container.setPosition(positions[i].x, positions[i].y + yOffset);
       slot.baseX = positions[i].x;
-      slot.baseY = positions[i].y;
+      slot.baseY = positions[i].y + yOffset;
     }
   }
 
@@ -1110,9 +1123,10 @@ export default class GameScene extends Phaser.Scene {
     const count = Math.max(layoutCount || 1, memberData.slot + 1);
     const positions = this._getSlotPositions(count);
     const pos = positions[memberData.slot];
-    slot.container.setPosition(pos.x, pos.y);
+    const yOffset = this._getEncounterSlotYOffset(memberData.slot, count, memberData.enemyId);
+    slot.container.setPosition(pos.x, pos.y + yOffset);
     slot.baseX = pos.x;
-    slot.baseY = pos.y;
+    slot.baseY = pos.y + yOffset;
 
     // Reposition name/HP based on actual sprite height
     const halfH = size.h / 2;

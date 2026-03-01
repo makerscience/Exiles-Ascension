@@ -10,7 +10,7 @@ import CombatEngine from '../systems/CombatEngine.js';
 import TerritoryManager from '../systems/TerritoryManager.js';
 import { D, format } from '../systems/BigNum.js';
 import {
-  getBaseDamage, getEffectiveStr, getEffectiveDef, getDodgeChance, getEffectiveMaxHp, getAutoAttackInterval, getGoldMultiplier,
+  getBaseDamage, getEffectiveMaxHp, getAutoAttackInterval, getGoldMultiplier,
 } from '../systems/ComputedStats.js';
 import { getUpgradesByGroup, getSkillUpgradesByStance, getUpgrade } from '../data/upgrades.js';
 import { FAILED_PURCHASE } from '../data/dialogue.js';
@@ -303,8 +303,8 @@ export default class UpgradePanel extends ModalPanel {
     this._dynamicObjects.push(legitHeader);
 
     const allStat = getUpgradesByGroup('stat');
-    const legit = allStat.filter((u) => u.category === 'legit');
-    const exploit = allStat.filter((u) => u.category === 'exploit');
+    const legit = allStat.filter((u) => u.category === 'legit' && UpgradeManager.isVisible(u.id));
+    const exploit = allStat.filter((u) => u.category === 'exploit' && UpgradeManager.isVisible(u.id));
 
     const leftBottom = this._renderUpgradeColumn(legit, leftX, topY);
     let rightBottom = topY;
@@ -371,7 +371,7 @@ export default class UpgradePanel extends ModalPanel {
         const buyColor = canBuy ? '#22c55e' : '#555555';
         const buyBg = canBuy ? '#333333' : '#222222';
 
-        const buyBtn = makeButton(this.scene, startX + 262, y + 4, `[BUY] ${costStr}`, {
+        const buyBtn = makeButton(this.scene, startX + 262, y - 1, `[BUY] ${costStr}`, {
           color: buyColor,
           bg: buyBg,
           hoverBg: '#555555',
@@ -396,21 +396,11 @@ export default class UpgradePanel extends ModalPanel {
     switch (upgradeId) {
       case 'sharpen_blade':
         return `Current click dmg: ${this._formatCompact(this._getLiveClickDamage())}`;
-      case 'battle_hardening': {
-        const str = getEffectiveStr();
-        const now = COMBAT_V2.playerDamage(str, 0);
-        const next = COMBAT_V2.playerDamage(str + 2, 0);
-        const gain = next - now;
-        return `STR: ${this._formatCompact(str)} | +1 Lv adds +${this._formatCompact(gain)} neutral dmg`;
-      }
-      case 'defensive_drills': {
-        const def = getEffectiveDef();
-        const blocked = def * 0.5;
-        return `DEF: ${this._formatCompact(def)} | Blocks ~${this._formatCompact(blocked)} dmg (pre-floor/pen)`;
-      }
-      case 'agility_drills': {
-        const dodge = getDodgeChance(80) * 100;
-        return `Dodge vs ACC 80: ${dodge.toFixed(1)}%`;
+      case 'bigger_swigs': {
+        const level = UpgradeManager.getLevel('bigger_swigs');
+        const perLevel = getUpgrade('bigger_swigs')?.effect?.valuePerLevel || 0.20;
+        const bonusPct = level * perLevel * 100;
+        return `Current bonus: ${bonusPct.toFixed(0)}%`;
       }
       case 'endurance_training':
         return `Current Max HP: ${format(getEffectiveMaxHp())}`;
@@ -502,7 +492,7 @@ export default class UpgradePanel extends ModalPanel {
         });
         this._dynamicObjects.push(reqLabel);
       } else {
-        const buyBtn = makeButton(this.scene, startX + 248, y + 2, '[BUY] 1 SP', {
+        const buyBtn = makeButton(this.scene, startX + 248, y - 3, '[BUY] 1 SP', {
           color: canBuy ? '#22c55e' : '#555555',
           bg: canBuy ? '#333333' : '#222222',
           hoverBg: '#555555',

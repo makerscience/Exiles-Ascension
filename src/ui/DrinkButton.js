@@ -2,6 +2,7 @@
 // Visible only when a waterskin is equipped. Cooldown driven by the equipped item's cooldownMs.
 
 import Store from '../systems/Store.js';
+import UpgradeManager from '../systems/UpgradeManager.js';
 import { getEffectiveMaxHp } from '../systems/ComputedStats.js';
 import { getItem } from '../data/items.js';
 import { on, emit, EVENTS } from '../events.js';
@@ -91,7 +92,9 @@ export default class DrinkButton {
     const item = this._getEquippedWaterskin();
     if (!item) return;
 
-    const healPercent = item.healPercent || 0.20;
+    const baseHealPercent = item.healPercent || 0.20;
+    const healBonusPercent = UpgradeManager.getFlatBonus('waterskinHealBonusPct');
+    const healPercent = baseHealPercent * (1 + healBonusPercent);
     const cooldownMs = item.cooldownMs || 30000;
 
     const maxHp = getEffectiveMaxHp();

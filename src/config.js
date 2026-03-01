@@ -89,7 +89,7 @@ export const CHEATS = {
 };
 
 export const SAVE = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   autosaveInterval: 30_000,   // ms
   minOfflineTime: 60_000,                // 60s — skip if quicker reload
   maxOfflineTime: 12 * 60 * 60 * 1000,  // 12 hours in ms
@@ -182,7 +182,7 @@ export const LOOT_V2 = {
 
 export const STANCES = {
   tempest:  { id: 'tempest',  label: 'Tempest',  atkSpeedMult: 1.8, damageMult: 0.6, damageReduction: 0.0 },
-  ruin:     { id: 'ruin',     label: 'Breaker',  atkSpeedMult: 0.5, damageMult: 2.0, damageReduction: 0.0 },
+  ruin:     { id: 'ruin',     label: 'Breaker',  atkSpeedMult: 0.55, damageMult: 2.0, damageReduction: 0.2 },
   fortress: { id: 'fortress', label: 'Fortress', atkSpeedMult: 0.8, damageMult: 0.8, damageReduction: 0.5 },
 };
 
@@ -193,3 +193,4 @@ export const STANCE_SWITCH_PAUSE_MS = 500;
 // Consumers can import directly from config/layout.js or config/theme.js instead.
 export { LAYOUT, TERRITORY } from './config/layout.js';
 export { COLORS, ZONE_THEMES, PARALLAX, TREE_ROWS, FERN_ROWS, UI } from './config/theme.js';
+

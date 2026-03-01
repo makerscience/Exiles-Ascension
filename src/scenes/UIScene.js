@@ -29,6 +29,7 @@ import SkillUnlockDirector from '../systems/SkillUnlockDirector.js';
 import FirstCrackDirector from '../systems/FirstCrackDirector.js';
 import CheatManager from '../systems/CheatManager.js';
 import PrestigeManager from '../systems/PrestigeManager.js';
+import SaveManager from '../systems/SaveManager.js';
 import { on, EVENTS } from '../events.js';
 import { FEATURES } from '../config/features.js';
 import { LAYOUT, COLORS } from '../config.js';
@@ -38,7 +39,8 @@ export default class UIScene extends Phaser.Scene {
     super('UIScene');
     this._unsubs = [];
     this._mapOpen = false;
-    this._demoEndContainer = null;
+    this._demoEndObjects = [];
+    this._demoEndShown = false;
   }
 
   create() {
@@ -111,11 +113,11 @@ export default class UIScene extends Phaser.Scene {
 
     this._unsubs.push(on(EVENTS.STANCE_CHANGED, () => this._refreshStanceActions()));
     this._unsubs.push(on(EVENTS.SAVE_LOADED, () => this._refreshStanceActions()));
+    this._unsubs.push(on(EVENTS.DEMO_COMPLETED, (data) => this._showDemoEndScreen(data)));
     this._unsubs.push(on(EVENTS.SKILL_UNLOCKED, ({ skillId }) => {
       this._refreshStanceActions();
       this._pulseUnlockedSkill(skillId);
     }));
-    this._unsubs.push(on(EVENTS.DEMO_COMPLETED, (data) => this._showDemoEndScreen(data)));
     this._refreshStanceActions();
     this.inventoryPanel = new InventoryPanel(this);
     this.upgradePanel = new UpgradePanel(this);
@@ -279,79 +281,8 @@ export default class UIScene extends Phaser.Scene {
     }
   }
 
-  _showDemoEndScreen(_data = null) {
-    if (this._demoEndContainer) return;
-    this.closeAllModals();
-    this._setCombatUiVisibility(false);
-
-    const manager = this.scene?.manager;
-    if (manager?.isActive?.('GameScene') && !manager?.isPaused?.('GameScene')) {
-      manager.pause('GameScene');
-    }
-
-    const ga = LAYOUT.gameArea;
-    const cx = ga.x + ga.w / 2;
-    const cy = ga.y + ga.h / 2;
-
-    const backdrop = this.add.rectangle(cx, cy, ga.w, ga.h, 0x000000, 0.78)
-      .setDepth(500)
-      .setInteractive({ useHandCursor: true });
-    const panel = this.add.rectangle(cx, cy, 760, 360, 0x111827, 0.97)
-      .setStrokeStyle(3, 0x60a5fa, 0.95)
-      .setDepth(501);
-    const title = this.add.text(cx, cy - 104, 'DEMO COMPLETE', {
-      fontFamily: 'monospace',
-      fontSize: '48px',
-      color: '#93c5fd',
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 6,
-    }).setOrigin(0.5).setDepth(502);
-    const body = this.add.text(cx, cy - 18, [
-      'You defeated Slimefang and completed the first 5-zone demo.',
-      '',
-      'More zones and areas are coming soon.',
-    ], {
-      fontFamily: 'monospace',
-      fontSize: '21px',
-      color: '#e5e7eb',
-      align: 'center',
-      lineSpacing: 7,
-    }).setOrigin(0.5).setDepth(502);
-    const menuBtn = this.add.text(cx, cy + 112, 'RETURN TO MAIN MENU', {
-      fontFamily: 'monospace',
-      fontSize: '22px',
-      color: '#f8fafc',
-      backgroundColor: '#1d4ed8',
-      padding: { x: 18, y: 10 },
-      fontStyle: 'bold',
-    }).setOrigin(0.5).setDepth(503).setInteractive({ useHandCursor: true });
-    menuBtn.on('pointerover', () => menuBtn.setStyle({ backgroundColor: '#2563eb' }));
-    menuBtn.on('pointerout', () => menuBtn.setStyle({ backgroundColor: '#1d4ed8' }));
-    menuBtn.on('pointerdown', () => this._goToMainMenuFromDemo());
-
-    this._demoEndContainer = this.add.container(0, 0, [backdrop, panel, title, body, menuBtn]).setDepth(500);
-  }
-
-  _goToMainMenuFromDemo() {
-    const scenePlugin = this.scene;
-    const manager = scenePlugin?.manager;
-    if (!scenePlugin || !manager) return;
-
-    scenePlugin.stop('OverworldScene');
-    scenePlugin.stop('SpritePreviewScene');
-    scenePlugin.stop('UIScene');
-    scenePlugin.stop('GameScene');
-    scenePlugin.start('StartScene');
-
-    setTimeout(() => {
-      if (!manager.isActive('StartScene')) {
-        window.location.reload();
-      }
-    }, 120);
-  }
-
   _shutdown() {
+    this._destroyDemoEndScreen();
     for (const unsub of this._unsubs) unsub();
     this._unsubs = [];
     if (this.topBar) { this.topBar.destroy(); this.topBar = null; }
@@ -390,10 +321,84 @@ export default class UIScene extends Phaser.Scene {
     if (FEATURES.prestigeEnabled) {
       PrestigeManager.destroy();
     }
-    if (this._demoEndContainer) {
-      this._demoEndContainer.destroy(true);
-      this._demoEndContainer = null;
-    }
     console.log('[UIScene] shutdown — cleaned up');
   }
+  _showDemoEndScreen(data = {}) {
+    if (this._demoEndShown) return;
+    this._demoEndShown = true;
+
+    this.closeAllModals();
+    this._setCombatUiVisibility(false);
+
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
+    const backdrop = this.add.rectangle(cx, cy, this.scale.width, this.scale.height, 0x000000, 0.78)
+      .setDepth(550)
+      .setInteractive();
+    backdrop.on('pointerdown', () => {});
+
+    const panel = this.add.rectangle(cx, cy, 760, 420, 0x0b1220, 0.98)
+      .setStrokeStyle(2, 0x38bdf8)
+      .setDepth(551);
+
+    const title = this.add.text(cx, cy - 130, 'DEMO COMPLETE', {
+      fontFamily: 'monospace',
+      fontSize: '42px',
+      color: '#38bdf8',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(552);
+
+    const body = this.add.text(cx, cy - 24, 'Slimefang is down.\nYou completed the Area 1 demo.\n\nThanks for playing.', {
+      fontFamily: 'monospace',
+      fontSize: '22px',
+      color: '#e5e7eb',
+      align: 'center',
+      lineSpacing: 8,
+    }).setOrigin(0.5).setDepth(552);
+
+    const zoneText = this.add.text(cx, cy + 66, `Area ${data.area ?? '-'} Zone ${data.zone ?? '-'} clear`, {
+      fontFamily: 'monospace',
+      fontSize: '16px',
+      color: '#93c5fd',
+    }).setOrigin(0.5).setDepth(552);
+
+    const menuBtn = this.add.text(cx, cy + 140, 'RETURN TO MAIN MENU', {
+      fontFamily: 'monospace',
+      fontSize: '20px',
+      color: '#f8fafc',
+      backgroundColor: '#1e3a8a',
+      padding: { x: 20, y: 8 },
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(553).setInteractive({ useHandCursor: true });
+    menuBtn.on('pointerdown', () => this._returnToMainMenuFromDemoEnd());
+    menuBtn.on('pointerover', () => menuBtn.setStyle({ backgroundColor: '#2563eb' }));
+    menuBtn.on('pointerout', () => menuBtn.setStyle({ backgroundColor: '#1e3a8a' }));
+
+    this._demoEndObjects = [backdrop, panel, title, body, zoneText, menuBtn];
+  }
+
+  _destroyDemoEndScreen() {
+    for (const obj of this._demoEndObjects) {
+      obj?.destroy();
+    }
+    this._demoEndObjects = [];
+    this._demoEndShown = false;
+  }
+
+  _returnToMainMenuFromDemoEnd() {
+    SaveManager.save();
+    const scenePlugin = this.scene;
+    if (!scenePlugin?.manager) return;
+    if (scenePlugin.isPaused('GameScene')) {
+      scenePlugin.resume('GameScene');
+    }
+    scenePlugin.stop('OverworldScene');
+    scenePlugin.stop('SpritePreviewScene');
+    scenePlugin.stop('UIScene');
+    scenePlugin.stop('GameScene');
+    scenePlugin.start('StartScene');
+  }
 }
+

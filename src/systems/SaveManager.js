@@ -21,11 +21,17 @@ const STANDARD_UPGRADE_IDS = [
   'battle_hardening',
   'defensive_drills',
   'agility_drills',
+  'bigger_swigs',
   'endurance_training',
   'auto_attack_speed',
   'gold_find',
   'power_smash_damage',
   'power_smash_recharge',
+];
+const REMOVED_PASSIVE_UPGRADES = [
+  { id: 'battle_hardening', target: 'str', valuePerLevel: 2 },
+  { id: 'defensive_drills', target: 'def', valuePerLevel: 2 },
+  { id: 'agility_drills', target: 'agi', valuePerLevel: 1 },
 ];
 
 function hasParsable(key) {
@@ -159,6 +165,35 @@ const migrations = {
     delete purchased.power_smash_damage;
     delete purchased.power_smash_recharge;
     next.purchasedUpgrades = purchased;
+
+    return next;
+  },
+  4: (data) => {
+    const next = { ...data };
+    const purchased = { ...(next.purchasedUpgrades || {}) };
+    const playerStats = { ...(next.playerStats || {}) };
+    let changedStats = false;
+    let refund = 0;
+
+    for (const removed of REMOVED_PASSIVE_UPGRADES) {
+      const level = Math.max(0, Math.floor(Number(purchased[removed.id]) || 0));
+      if (level <= 0) continue;
+
+      refund += level;
+      delete purchased[removed.id];
+
+      const current = Number(playerStats[removed.target]);
+      if (Number.isFinite(current)) {
+        playerStats[removed.target] = Math.max(0, current - (removed.valuePerLevel * level));
+        changedStats = true;
+      }
+    }
+
+    if (refund > 0) {
+      next.skillPoints = Math.max(0, Math.floor(Number(next.skillPoints) || 0) + refund);
+    }
+    next.purchasedUpgrades = purchased;
+    if (changedStats) next.playerStats = playerStats;
 
     return next;
   },

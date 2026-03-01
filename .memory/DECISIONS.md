@@ -11,6 +11,34 @@ Format:
 ---
 
 ## 2026-03-01
+- Tags: combat, balance, tooling, failure-mode
+- Decision: Balance speed semantics are now explicitly non-negative: editor/UI and runtime clamp speed multipliers to a minimum of `0.01`.
+- Rationale: Negative speed values in balance tuning produced pathological attack intervals by collapsing into the combat timer floor path, which felt like nonstop attacks.
+- Alternatives considered: Remove interval floor entirely (rejected: removes safety guard against timer spam), keep permissive editor with docs warning (rejected: fragile and error-prone).
+- Consequences / Follow-ups: `zone-balance-gui.js` now sanitizes parse/load/save/input for speed, and runtime guards in `getZoneBias/getEnemyBias/getBossBias` + combat member build paths prevent stale/manual data from reintroducing the issue.
+
+## 2026-03-01
+- Tags: progression, skills, migration
+- Decision: Legacy passive upgrades `battle_hardening`, `defensive_drills`, and `agility_drills` were removed and replaced by `bigger_swigs`, gated behind waterskin drink unlock progression.
+- Rationale: Passive skill roster was refocused on active gameplay loops and drink utility; player requested waterskin healing progression as the new passive sink.
+- Alternatives considered: Keep old passives and add Bigger Swigs on top (rejected: overcrowded passive list and conflicting progression intent).
+- Consequences / Follow-ups: Save schema moved to v4 with migration that removes old passive purchases, refunds SP, and reverses their flat stat grants on load.
+
+## 2026-03-01
+- Tags: skills, ux, balance
+- Decision: Bigger Swigs uses bonus-effect scaling semantics: `+20%` healing effectiveness per level (Lv0 `+0%`, Lv1 `+20%`, Lv5 `+100%`), applied as `baseHeal * (1 + bonus)`.
+- Rationale: Player expectation was explicit bonus progression, not additive replacement of base heal values.
+- Alternatives considered: Additive raw heal percentage (`base + bonus`) (rejected: mismatched expected "bonus" wording and level-0 behavior confusion).
+- Consequences / Follow-ups: UpgradePanel insight text now reports only current bonus percent for clarity.
+
+## 2026-03-01
+- Tags: demo-scope, boss, ux
+- Decision: Slimefang demo endpoint is restored and synchronized with death presentation: boss-defeated handoff is delayed to let the full death animation complete, then demo-complete overlay is shown and progression halts.
+- Rationale: Immediate post-kill progression cut off the intended finale payoff and felt abrupt.
+- Alternatives considered: End immediately on boss kill event (rejected: interrupts visual sequence), keep progression into zone 6 (rejected for demo-slice scope).
+- Consequences / Follow-ups: `CombatEngine` applies Slimefang-specific defeat delay, `BossManager` emits `DEMO_COMPLETED` and exits before next-zone advance, and `UIScene` owns the demo-complete overlay + return-to-menu path.
+
+## 2026-03-01
 - Tags: audio, architecture, scenes
 - Decision: Background soundtrack ownership moved out of `GameScene` into a shared `MusicManager` singleton; both `StartScene` and `GameScene` call `MusicManager.ensurePlaying()` instead of creating independent `Audio` instances.
 - Rationale: Music now needs to begin on the main menu and continue seamlessly into gameplay without restarting or gap-cutting on scene transitions.

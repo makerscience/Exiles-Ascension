@@ -15,6 +15,7 @@ const EQUIP_TO_ITEM_SLOT = {
   main_hand: 'weapon', chest: 'body', head: 'head',
   legs: 'legs', boots: 'boots', gloves: 'gloves', amulet: 'amulet',
 };
+const UNCOMMON_UNLOCK_GLOBAL_ZONE = 3;
 
 let scope = null;
 
@@ -55,7 +56,8 @@ const LootEngine = {
     const item = LootEngine._pickItem();
     if (!item) return;
 
-    const rarity = LootEngine._rollRarityV2(lootBonus.rarityBoost);
+    const rolledRarity = LootEngine._rollRarityV2(lootBonus.rarityBoost);
+    const rarity = LootEngine._applyItemRarityRules(item, rolledRarity, globalZone);
     LootEngine._awardDrop(item, rarity);
   },
 
@@ -74,11 +76,15 @@ const LootEngine = {
     const progress = state.areaProgress[area];
     const isFirstKill = !progress || !progress.bossesDefeated.includes(zone);
 
-    const uncommonChance = isFirstKill
-      ? LOOT_V2.bossFirstKillUncommonChance
-      : LOOT_V2.bossRepeatUncommonChance;
-
-    const rarity = Math.random() < uncommonChance ? 'uncommon' : 'common';
+    const uncommonUnlocked = getPlayerGlobalZone() >= UNCOMMON_UNLOCK_GLOBAL_ZONE;
+    let rarity = 'common';
+    if (uncommonUnlocked) {
+      const uncommonChance = isFirstKill
+        ? LOOT_V2.bossFirstKillUncommonChance
+        : LOOT_V2.bossRepeatUncommonChance;
+      rarity = Math.random() < uncommonChance ? 'uncommon' : 'common';
+    }
+    rarity = LootEngine._applyItemRarityRules(item, rarity, getPlayerGlobalZone());
     LootEngine._awardDrop(item, rarity);
 
     // Guaranteed first-kill bonus drop (e.g. waterskin from Rotfang)
@@ -149,6 +155,9 @@ const LootEngine = {
   // ── Rarity roll: weighted pick from rarityWeights ────────────────
 
   _rollRarityV2(rarityBoost = 0) {
+    if (getPlayerGlobalZone() < UNCOMMON_UNLOCK_GLOBAL_ZONE) {
+      return 'common';
+    }
     const weights = { ...LOOT_V2.rarityWeights };
     // Boost uncommon weight for group encounter loot bonus
     if (rarityBoost > 0 && weights.uncommon != null) {
@@ -163,6 +172,28 @@ const LootEngine = {
       if (roll <= 0) return rarity;
     }
     return 'common';
+  },
+
+  _applyItemRarityRules(item, rarity, globalZone = getPlayerGlobalZone()) {
+    if (!item) return rarity || 'common';
+    const rules = item.dropRules || {};
+    let resolved = rarity || 'common';
+
+    if (resolved === 'uncommon' && globalZone < UNCOMMON_UNLOCK_GLOBAL_ZONE) {
+      resolved = 'common';
+    }
+
+    const uncommonMinZone = Number(rules.uncommonMinZone);
+    if (resolved === 'uncommon' && Number.isFinite(uncommonMinZone) && globalZone < uncommonMinZone) {
+      resolved = 'common';
+    }
+
+    const commonMaxZone = Number(rules.commonMaxZone);
+    if (resolved === 'common' && Number.isFinite(commonMaxZone) && globalZone > commonMaxZone) {
+      resolved = globalZone >= UNCOMMON_UNLOCK_GLOBAL_ZONE ? 'uncommon' : 'common';
+    }
+
+    return resolved;
   },
 
   // ── Award drop ───────────────────────────────────────────────────

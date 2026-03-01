@@ -163,11 +163,10 @@ const BossManager = {
       area, zone, bossType,
       name: activeBoss.name,
     });
-    // Demo endpoint: stop progression after Slimefang (Area 1 Zone 5).
+
+    // Demo endpoint: after Slimefang (A1Z5), stop progression and show end screen.
     if (activeBoss.id === 'boss_a1z5_the_hollow') {
-      if (!state.flags.demoCompleted) {
-        Store.setFlag('demoCompleted', true);
-      }
+      Store.setFlag('demoCompleted', true);
       emit(EVENTS.DEMO_COMPLETED, { area, zone, name: activeBoss.name });
       activeBoss = null;
       return;
@@ -254,3 +253,4 @@ const BossManager = {
 };
 
 export default BossManager;
+

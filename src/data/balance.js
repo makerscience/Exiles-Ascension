@@ -8,19 +8,27 @@ export const ENEMY_BALANCE = {
 };
 
 export const BOSS_BALANCE = {
-  'boss_a1z1_rotfang': { atk: 0.80, speed: -0.65 },
+  'boss_a1z1_rotfang': { hp: 1.30, atk: 0.80, def: 1.10 },
   'boss_a1z2_irontusk': { hp: 0.80, atk: 0.90, def: 0.90 },
   'boss_a1z3_the_lurcher': { hp: 0.50, atk: 0.90, def: 0.50, speed: 0.40 },
   'boss_a1z4_blight_mother': { hp: 0.35, atk: 0.60, def: 0.50, gold: 3.00, xp: 3.00 },
   'boss_a1z5_the_hollow': { hp: 4.00, atk: 1.50, def: 0.30, speed: 0.50, regen: 2.50, xp: 3.35 },
 };
 
+function sanitizeBias(stat, value) {
+  if (!Number.isFinite(value)) return 1.0;
+  if (stat === 'speed') return Math.max(0.01, value);
+  return value;
+}
+
 export function getEnemyBias(enemyId, stat) {
-  return ENEMY_BALANCE[enemyId]?.[stat] ?? 1.0;
+  const value = ENEMY_BALANCE[enemyId]?.[stat];
+  return sanitizeBias(stat, value);
 }
 
 export function getBossBias(bossId, stat) {
-  return BOSS_BALANCE[bossId]?.[stat] ?? 1.0;
+  const value = BOSS_BALANCE[bossId]?.[stat];
+  return sanitizeBias(stat, value);
 }
 
 // Loot drop-rate overrides.

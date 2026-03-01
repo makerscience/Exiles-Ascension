@@ -75,7 +75,10 @@ export const ZONE_BALANCE = {
 
 /** Returns the bias multiplier for a given global zone + stat. Defaults to 1.0. */
 export function getZoneBias(globalZone, stat) {
-  return ZONE_BALANCE[globalZone]?.[stat] ?? 1.0;
+  const value = ZONE_BALANCE[globalZone]?.[stat];
+  if (!Number.isFinite(value)) return 1.0;
+  if (stat === 'speed') return Math.max(0.01, value);
+  return value;
 }
 
 /** Kill threshold to trigger "Challenge Boss" button. */

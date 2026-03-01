@@ -76,7 +76,7 @@ export default class SmashButton {
   }
 
   _getCooldownMs() {
-    return UpgradeManager.hasUpgrade('smash_t3') ? 22000 : 30000;
+    return UpgradeManager.hasUpgrade('smash_t3') ? 15000 : 20000;
   }
 
   _refreshVisibility() {

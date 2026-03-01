@@ -14,6 +14,12 @@ const STANCE_ICONS = {
   fortress: 'icon_fortress',
 };
 
+const STANCE_HINTS = {
+  tempest:  'Fast Attack\nWeak Defense',
+  ruin:     'Strong, Slow Attack\nModerate Defense',
+  fortress: 'Weak Attack\nStrong Defense',
+};
+
 const BUTTON_SIZE = 120;
 const HOVER_SCALE = 1.05;
 
@@ -37,6 +43,20 @@ export default class StanceSwitcher {
     this._baseScaleX = this._icon.scaleX;
     this._baseScaleY = this._icon.scaleY;
 
+    this._hintText = scene.add.text(
+      snapPx(this._x + BUTTON_SIZE / 2 + 14),
+      snapPx(this._y - 20),
+      '',
+      {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: '#e5e7eb',
+        stroke: '#000000',
+        strokeThickness: 3,
+        lineSpacing: 2,
+      },
+    ).setOrigin(0, 0.5).setDepth(11);
+
     this._icon.on('pointerdown', () => this._cycle());
     this._icon.on('pointerover', () => this._icon.setScale(this._baseScaleX * HOVER_SCALE, this._baseScaleY * HOVER_SCALE));
     this._icon.on('pointerout', () => this._icon.setScale(this._baseScaleX, this._baseScaleY));
@@ -58,9 +78,11 @@ export default class StanceSwitcher {
 
   _updateVisual(stanceId) {
     const iconKey = STANCE_ICONS[stanceId] || STANCE_ICONS.ruin;
+    const hint = STANCE_HINTS[stanceId] || STANCE_HINTS.ruin;
 
     this._icon.setTexture(iconKey);
     this._icon.clearTint();
+    this._hintText.setText(hint);
 
     // Brief pulse on switch
     this.scene.tweens.killTweensOf(this._icon);
@@ -77,10 +99,12 @@ export default class StanceSwitcher {
 
   show() {
     this._icon.setVisible(true);
+    this._hintText.setVisible(true);
   }
 
   hide() {
     this._icon.setVisible(false);
+    this._hintText.setVisible(false);
   }
 
   destroy() {
@@ -88,5 +112,6 @@ export default class StanceSwitcher {
     this._unsubs = [];
     this.scene.tweens.killTweensOf(this._icon);
     if (this._icon) { this._icon.destroy(); this._icon = null; }
+    if (this._hintText) { this._hintText.destroy(); this._hintText = null; }
   }
 }

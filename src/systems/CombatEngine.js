@@ -64,7 +64,7 @@ const CORRUPTION_CFG = {
 const CHARGE_ATTACK_DEFAULT_DAMAGE_MULT = 4.0;
 const CHARGE_ATTACK_DEFAULT_CAST_MS = 2500;
 const CHARGE_ATTACK_DEFAULT_COOLDOWN_MS = 15000;
-const SLIMEFANG_DEMO_END_DELAY_MS = 10000;
+const SLIMEFANG_DEMO_END_DELAY_MS = 10200;
 
 const AREA1_SLIME_BASE_VARIANTS = [
   { name: 'Friendly Slime', defaultKey: 'slime001_default' },
@@ -215,7 +215,7 @@ const CombatEngine = {
    * @param {object} opts - { isBoss, isAdd, attackSpeedMult }
    */
   _buildMember(enemyData, slot, opts = {}) {
-    const effectiveAtkSpeed = (enemyData.attackSpeed ?? 1.0) * (opts.attackSpeedMult ?? 1.0);
+    const effectiveAtkSpeed = Math.max(0.01, (enemyData.attackSpeed ?? 1.0) * (opts.attackSpeedMult ?? 1.0));
     const armor = (
       enemyData.armor
       && typeof enemyData.armor === 'object'
@@ -613,7 +613,7 @@ const CombatEngine = {
       hp: D(enemyTemplate.hp).times(getZoneScaling(zone, 'hp') * getZoneBias(globalZone, 'hp') * eb('hp') * hpMult).floor().toString(),
       attack: Math.floor(enemyTemplate.attack * atkScale * getZoneBias(globalZone, 'atk') * eb('atk')),
       defense: Math.floor((enemyTemplate.defense || 0) * getZoneBias(globalZone, 'def') * eb('def')),
-      attackSpeed: (enemyTemplate.attackSpeed ?? 1) * getZoneBias(globalZone, 'speed') * eb('speed'),
+      attackSpeed: Math.max(0.01, (enemyTemplate.attackSpeed ?? 1) * getZoneBias(globalZone, 'speed') * eb('speed')),
       goldDrop: D(enemyTemplate.goldDrop).times(getZoneScaling(zone, 'gold') * getZoneBias(globalZone, 'gold') * eb('gold') * rewardMult).floor().toString(),
       xpDrop: D(enemyTemplate.xpDrop).times(getZoneScaling(zone, 'xp') * getZoneBias(globalZone, 'xp') * eb('xp') * rewardMult).floor().toString(),
       regen: enemyTemplate.regen ? Math.floor(enemyTemplate.regen * atkScale * getZoneBias(globalZone, 'regen') * eb('regen')) : 0,
@@ -1075,7 +1075,6 @@ const CombatEngine = {
 
   /** Spawn a regular enemy using encounter templates + zone scaling. */
   spawnEnemy() {
-    if (Store.getState().flags.demoCompleted) return;
     const state = Store.getState();
     const area = state.currentArea;
     const zone = state.currentZone;
@@ -1112,7 +1111,7 @@ const CombatEngine = {
       hp:          D(bossTemplate.hp).times(bb('hp')).floor().toString(),
       attack:      Math.floor(bossTemplate.attack * bb('atk')),
       defense:     Math.floor((bossTemplate.defense || 0) * bb('def')),
-      attackSpeed: (bossTemplate.attackSpeed ?? 1) * bb('speed'),
+      attackSpeed: Math.max(0.01, (bossTemplate.attackSpeed ?? 1) * bb('speed')),
       goldDrop:    D(bossTemplate.goldDrop).times(bb('gold')).floor().toString(),
       xpDrop:      D(bossTemplate.xpDrop).times(bb('xp')).floor().toString(),
       regen:       bossTemplate.regen ? Math.floor(bossTemplate.regen * bb('regen')) : 0,
