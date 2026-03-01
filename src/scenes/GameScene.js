@@ -65,6 +65,22 @@ export default class GameScene extends Phaser.Scene {
     // Player sprite — start with first walk frame
     this.playerRect = this.add.image(playerX, this._combatY, this._armorSet.walkFrames[0]);
     this.playerRect.setDisplaySize(300, 375);
+    this._bulwarkVisual = this.add.image(playerX, this._combatY, 'bulwarkvisual');
+    this._bulwarkVisual.setVisible(false);
+    this._bulwarkVisual.setAlpha(0.92);
+    this._bulwarkVisual.setDepth((this.playerRect.depth ?? 0) + 1);
+    this._bulwarkAnchorX = this._playerX + 110;
+    this._bulwarkAnchorY = this._combatY - 26;
+    const bulwarkFrameW = this._bulwarkVisual.frame?.cutWidth || 323;
+    const bulwarkFrameH = this._bulwarkVisual.frame?.cutHeight || 763;
+    this._bulwarkVisualBaseH = 225;
+    this._bulwarkVisualBaseW = this._bulwarkVisualBaseH * (bulwarkFrameW / bulwarkFrameH);
+    this._bulwarkVisualDurationMs = 0;
+    this._bulwarkVisualEndAt = 0;
+    this._bulwarkBreakFx = [];
+    this._lastShieldHp = 0;
+    this._bulwarkShakeTween = null;
+    this._syncBulwarkVisual();
 
     // Looping walk cycle timer (~150ms per frame)
     this._walkTimer = this.time.addEvent({
@@ -242,6 +258,10 @@ export default class GameScene extends Phaser.Scene {
       this._shieldMaxHp = data.shieldHp;
       this.shieldBarBg.setVisible(true);
       this.shieldBarFill.setDisplaySize(100, 8).setVisible(true);
+      this._bulwarkVisualDurationMs = Math.max(0, Number(data.durationMs) || 0);
+      this._bulwarkVisualEndAt = this.time.now + this._bulwarkVisualDurationMs;
+      this._lastShieldHp = data.shieldHp;
+      this._syncBulwarkVisual();
     }));
     this._unsubs.push(on(EVENTS.POWER_SMASH_USED, () => {
       this._activateSkillVisualLock(700);
@@ -325,19 +345,24 @@ export default class GameScene extends Phaser.Scene {
 
   update(_time, delta) {
     TimeEngine.update(delta);
+    const shieldHpNow = CombatEngine.getShieldHp();
 
     // Update shield bar
     if (this._shieldMaxHp > 0) {
-      const shieldHp = CombatEngine.getShieldHp();
-      if (shieldHp <= 0) {
+      if (shieldHpNow <= 0) {
         this._shieldMaxHp = 0;
         this.shieldBarBg.setVisible(false);
         this.shieldBarFill.setVisible(false);
       } else {
-        const ratio = shieldHp / this._shieldMaxHp;
+        const ratio = shieldHpNow / this._shieldMaxHp;
         this.shieldBarFill.setDisplaySize(Math.max(0, ratio * 100), 8);
       }
     }
+    if (shieldHpNow < this._lastShieldHp) {
+      this._shakeBulwarkVisual();
+    }
+    this._lastShieldHp = shieldHpNow;
+    this._syncBulwarkVisual();
 
     // Update ruin stance charge bar + charge sprite
     if (this._chargeBarBg.visible) {
@@ -725,6 +750,162 @@ export default class GameScene extends Phaser.Scene {
     const g = ((et >> 8) & 0xff) * ((at >> 8) & 0xff) * ((bt >> 8) & 0xff) / (255 * 255);
     const b = (et & 0xff) * (at & 0xff) * (bt & 0xff) / (255 * 255);
     sprite.setTint((Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b));
+  }
+
+  _syncBulwarkVisual(forceHide = false) {
+    if (!this._bulwarkVisual) return;
+
+    const shieldHp = forceHide ? 0 : CombatEngine.getShieldHp();
+    if (shieldHp <= 0) {
+      if (this._bulwarkShakeTween) {
+        this.tweens.killTweensOf(this._bulwarkVisual);
+        this._bulwarkShakeTween = null;
+      }
+      this._bulwarkVisual.setAngle(0);
+      if (!forceHide && this._bulwarkVisual.visible) {
+        const now = this.time.now;
+        const brokeEarly = this._bulwarkVisualEndAt > 0 && now < (this._bulwarkVisualEndAt - 120);
+        if (brokeEarly) this._playBulwarkBreakFx();
+      }
+      this._bulwarkVisual.setVisible(false);
+      return;
+    }
+
+    const targetH = this._bulwarkVisualBaseH || 225;
+    const targetW = this._bulwarkVisualBaseW || 95;
+
+    // Fade as shield nears timeout.
+    let alpha = 0.92;
+    if (this._bulwarkVisualEndAt > 0 && this._bulwarkVisualDurationMs > 0) {
+      const remaining = this._bulwarkVisualEndAt - this.time.now;
+      const fadeWindow = Math.max(700, Math.min(2000, this._bulwarkVisualDurationMs * 0.25));
+      if (remaining <= fadeWindow) {
+        const t = Phaser.Math.Clamp(remaining / fadeWindow, 0, 1);
+        alpha = 0.2 + (0.72 * t);
+      }
+    }
+
+    this._bulwarkVisual.setVisible(true);
+    if (!this._bulwarkShakeTween) {
+      this._bulwarkVisual.setPosition(this._bulwarkAnchorX, this._bulwarkAnchorY);
+      this._bulwarkVisual.setAngle(0);
+    }
+    this._bulwarkVisual.setDisplaySize(targetW, targetH);
+    this._bulwarkVisual.setAlpha(alpha);
+    this._bulwarkVisual.setDepth((this.playerRect?.depth ?? 0) + 1);
+  }
+
+  _shakeBulwarkVisual() {
+    if (!this._bulwarkVisual || !this._bulwarkVisual.visible) return;
+
+    const ax = this._bulwarkAnchorX;
+    const ay = this._bulwarkAnchorY;
+
+    if (this._bulwarkShakeTween) {
+      this.tweens.killTweensOf(this._bulwarkVisual);
+    }
+    this._bulwarkShakeTween = null;
+    this._bulwarkVisual.setPosition(ax, ay);
+    this._bulwarkVisual.setAngle(0);
+
+    const dir = Math.random() < 0.5 ? -1 : 1;
+    const steps = [
+      { x: ax + (dir * 26), y: ay - 12, angle: dir * 8, duration: 40, ease: 'Cubic.easeOut' },
+      { x: ax - (dir * 22), y: ay + 9, angle: -dir * 7, duration: 45, ease: 'Cubic.easeInOut' },
+      { x: ax + (dir * 16), y: ay - 6, angle: dir * 5, duration: 36, ease: 'Cubic.easeInOut' },
+      { x: ax, y: ay, angle: 0, duration: 55, ease: 'Quad.easeOut' },
+    ];
+    const runStep = (index) => {
+      if (!this._bulwarkVisual) {
+        this._bulwarkShakeTween = null;
+        return;
+      }
+      if (index >= steps.length) {
+        this._bulwarkVisual.setPosition(ax, ay);
+        this._bulwarkVisual.setAngle(0);
+        this._bulwarkShakeTween = null;
+        return;
+      }
+      const step = steps[index];
+      this._bulwarkShakeTween = this.tweens.add({
+        targets: this._bulwarkVisual,
+        x: step.x,
+        y: step.y,
+        angle: step.angle,
+        duration: step.duration,
+        ease: step.ease,
+        onComplete: () => runStep(index + 1),
+      });
+    };
+    runStep(0);
+  }
+
+  _playBulwarkBreakFx() {
+    if (!this._bulwarkVisual || !this._bulwarkVisual.visible) return;
+
+    this._destroyBulwarkBreakFx();
+
+    const x = this._bulwarkVisual.x;
+    const y = this._bulwarkVisual.y;
+    const w = this._bulwarkVisual.displayWidth;
+    const h = this._bulwarkVisual.displayHeight;
+    const baseDepth = this._bulwarkVisual.depth;
+    const baseAlpha = this._bulwarkVisual.alpha;
+    const frameW = this._bulwarkVisual.frame?.cutWidth || 323;
+    const frameH = this._bulwarkVisual.frame?.cutHeight || 763;
+    const halfFrameW = Math.floor(frameW / 2);
+
+    const left = this.add.image(x - w * 0.25, y, 'bulwarkvisual');
+    left.setDisplaySize(w * 0.5, h);
+    left.setCrop(0, 0, halfFrameW, frameH);
+    left.setAlpha(baseAlpha);
+    left.setDepth(baseDepth + 1);
+
+    const right = this.add.image(x + w * 0.25, y, 'bulwarkvisual');
+    right.setDisplaySize(w * 0.5, h);
+    right.setCrop(halfFrameW, 0, frameW - halfFrameW, frameH);
+    right.setAlpha(baseAlpha);
+    right.setDepth(baseDepth + 1);
+
+    this._bulwarkBreakFx.push(left, right);
+
+    const finishPiece = (piece) => {
+      if (!piece) return;
+      const idx = this._bulwarkBreakFx.indexOf(piece);
+      if (idx !== -1) this._bulwarkBreakFx.splice(idx, 1);
+      piece.destroy();
+    };
+
+    this.tweens.add({
+      targets: left,
+      x: left.x - 42,
+      y: left.y + 135,
+      angle: -24,
+      alpha: 0,
+      duration: 460,
+      ease: 'Quad.easeIn',
+      onComplete: () => finishPiece(left),
+    });
+    this.tweens.add({
+      targets: right,
+      x: right.x + 42,
+      y: right.y + 135,
+      angle: 24,
+      alpha: 0,
+      duration: 460,
+      ease: 'Quad.easeIn',
+      onComplete: () => finishPiece(right),
+    });
+  }
+
+  _destroyBulwarkBreakFx() {
+    if (!this._bulwarkBreakFx || this._bulwarkBreakFx.length === 0) return;
+    for (const obj of this._bulwarkBreakFx) {
+      if (!obj) continue;
+      this.tweens.killTweensOf(obj);
+      obj.destroy();
+    }
+    this._bulwarkBreakFx = [];
   }
 
   // ── Walk timer lock counting ────────────────────────────────────
@@ -2184,6 +2365,19 @@ export default class GameScene extends Phaser.Scene {
     this._shieldMaxHp = 0;
     this.shieldBarBg.setVisible(false);
     this.shieldBarFill.setVisible(false);
+    this._bulwarkVisualEndAt = 0;
+    this._bulwarkVisualDurationMs = 0;
+    this._lastShieldHp = 0;
+    if (this._bulwarkShakeTween) {
+      this.tweens.killTweensOf(this._bulwarkVisual);
+      this._bulwarkShakeTween = null;
+    }
+    if (this._bulwarkVisual) {
+      this._bulwarkVisual.setPosition(this._bulwarkAnchorX, this._bulwarkAnchorY);
+      this._bulwarkVisual.setAngle(0);
+    }
+    this._destroyBulwarkBreakFx();
+    this._syncBulwarkVisual(true);
 
     const ga = LAYOUT.gameArea;
 
@@ -2621,6 +2815,15 @@ export default class GameScene extends Phaser.Scene {
     for (const unsub of this._unsubs) unsub();
     this._unsubs = [];
     this._destroyParallax();
+    if (this._bulwarkShakeTween) {
+      this.tweens.killTweensOf(this._bulwarkVisual);
+      this._bulwarkShakeTween = null;
+    }
+    this._destroyBulwarkBreakFx();
+    if (this._bulwarkVisual) {
+      this._bulwarkVisual.destroy();
+      this._bulwarkVisual = null;
+    }
     if (this._flurryAnnounce) {
       this.tweens.killTweensOf(this._flurryAnnounce);
       this._flurryAnnounce.destroy();

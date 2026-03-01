@@ -70,6 +70,13 @@ function createInitialState() {
       unlockedArmorBreak: false, unlockedInterrupt: false, unlockedCleanse: false,
       shownUnlockArmorBreak: false, shownUnlockInterrupt: false, shownUnlockCleanse: false,
       firstStanceSwitch: false, firstThornsHit: false, firstEvasionDodge: false, firstRegenHeal: false,
+      waterskinEquipHintDone: false,
+      waterskinDropPopupShown: false,
+      waterskinDrinkPopupShown: false,
+      enhanceTutorialZone3KillCount: 0,
+      enhanceTutorialIntroShown: false,
+      enhanceTutorialStage: 'inactive',
+      enhanceTutorialCompleted: false,
       // Area entrance flags
       reachedArea2: false, reachedArea3: false, reachedArea4: false, reachedArea5: false,
     },

@@ -9,6 +9,7 @@ export const ENEMY_BALANCE = {
 
 export const BOSS_BALANCE = {
   'boss_a1z1_rotfang': { atk: 0.80, speed: -0.65 },
+  'boss_a1z2_irontusk': { hp: 0.80, atk: 0.90, def: 0.90 },
 };
 
 export function getEnemyBias(enemyId, stat) {

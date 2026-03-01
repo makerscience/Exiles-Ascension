@@ -10,6 +10,8 @@ export default class TopBar {
   constructor(scene) {
     this.scene = scene;
     this._unsubs = [];
+    this._goldHighlightTween = null;
+    this._goldHighlightTimer = null;
 
     const { x, y, w, h } = LAYOUT.topBar;
     const state = Store.getState();
@@ -76,6 +78,15 @@ export default class TopBar {
       this._refreshLevel(s);
       this._refreshXp(s);
     }));
+
+    this._unsubs.push(on(EVENTS.UI_HIGHLIGHT_GOLD, (payload = {}) => {
+      if (payload.active === false) {
+        this._stopGoldHighlight();
+        return;
+      }
+      const durationMs = Number(payload.durationMs) || 2200;
+      this._startGoldHighlight(durationMs);
+    }));
   }
 
   _refreshGold(state, pop = false) {
@@ -115,8 +126,42 @@ export default class TopBar {
     });
   }
 
+  _startGoldHighlight(durationMs) {
+    this._stopGoldHighlight();
+    this.goldText.setColor('#facc15');
+
+    this._goldHighlightTween = this.scene.tweens.add({
+      targets: this.goldText,
+      scaleX: 1.12,
+      scaleY: 1.12,
+      duration: 220,
+      ease: 'Sine.easeInOut',
+      yoyo: true,
+      repeat: -1,
+    });
+
+    this._goldHighlightTimer = this.scene.time.delayedCall(durationMs, () => {
+      this._stopGoldHighlight();
+    });
+  }
+
+  _stopGoldHighlight() {
+    if (this._goldHighlightTween) {
+      this._goldHighlightTween.stop();
+      this._goldHighlightTween = null;
+    }
+    if (this._goldHighlightTimer) {
+      this._goldHighlightTimer.remove(false);
+      this._goldHighlightTimer = null;
+    }
+    this.scene.tweens.killTweensOf(this.goldText);
+    this.goldText.setScale(1, 1);
+    this.goldText.setColor('#ffffff');
+  }
+
   destroy() {
     for (const unsub of this._unsubs) unsub();
     this._unsubs = [];
+    this._stopGoldHighlight();
   }
 }

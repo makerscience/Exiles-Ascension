@@ -3,7 +3,7 @@
 
 import Phaser from 'phaser';
 import ModalPanel from './ModalPanel.js';
-import { EVENTS } from '../events.js';
+import { EVENTS, on } from '../events.js';
 import { COLORS, WORLD, LAYOUT } from '../config.js';
 import { getItem, getScaledItem } from '../data/items.js';
 import {
@@ -16,10 +16,20 @@ import { parseStackKey } from '../systems/InventorySystem.js';
 import EnhancementManager from '../systems/EnhancementManager.js';
 import { makeButton } from './ui-utils.js';
 import { getActiveArmorSet } from '../config/playerSprites.js';
+import { format } from '../systems/BigNum.js';
 
 const PANEL_W = 880;
 const PANEL_H = 560;
 const ICON_SIZE = 128;
+const WATERSKIN_ITEM_ID = 'a1_rotfang_waterskin';
+const ENHANCE_GUIDE_TARGET_SLOT = 'main_hand';
+const ENHANCE_GUIDE_STAGES = {
+  INACTIVE: 'inactive',
+  BUTTON: 'button',
+  SLOT: 'slot',
+  ENHANCE: 'enhance',
+  DONE: 'done',
+};
 
 // Grid constants (inventory grid, right side)
 const GRID_COLS = 5;
@@ -69,7 +79,50 @@ export default class InventoryPanel extends ModalPanel {
     this._dragData = null;      // { stackKey, equipSlotId }
     this._pendingClick = null;  // { action: 'select'|'equip', stackKey }
     this._sellZone = null;      // sell drop-zone rectangle
+    this._sellModeActive = false;
+    this._inventoryGridRect = null;
     this._refreshPending = false; // deferred refresh while dragging
+    this._waterskinGuideState = 'inactive'; // inactive | button | item | done
+    this._enhanceGuideState = ENHANCE_GUIDE_STAGES.INACTIVE;
+    this._inventoryPulseTween = null;
+    this._inventoryBtnBaseScaleX = this._toggleBtn?.scaleX ?? 1;
+    this._inventoryBtnBaseScaleY = this._toggleBtn?.scaleY ?? 1;
+    this._waterskinSlotPulseTween = null;
+    this._enhanceSlotPulseTween = null;
+    this._enhanceButtonPulseTween = null;
+    this._enhanceButtonRef = null;
+    this._globalPointerDownHandler = (pointer) => {
+      if (!this._isOpen || !this._sellModeActive) return;
+      if (this._isPointerInInventoryGrid(pointer.x, pointer.y)) return;
+      if (this._sellZone && this._sellZone.getBounds().contains(pointer.x, pointer.y)) return;
+      this._setSellMode(false);
+    };
+    this.scene.input.on('pointerdown', this._globalPointerDownHandler);
+
+    this._unsubs.push(on(EVENTS.INV_ITEM_ADDED, () => this._syncWaterskinGuideState()));
+    this._unsubs.push(on(EVENTS.INV_ITEM_EQUIPPED, ({ slot, itemId } = {}) => {
+      if (slot === 'waterskin' && itemId) {
+        Store.setFlag('waterskinEquipHintDone', true);
+      }
+      this._syncWaterskinGuideState();
+    }));
+    this._unsubs.push(on(EVENTS.INV_ITEM_SOLD, () => this._syncWaterskinGuideState()));
+    this._unsubs.push(on(EVENTS.INV_ITEM_MERGED, () => this._syncWaterskinGuideState()));
+    this._unsubs.push(on(EVENTS.WORLD_ZONE_CHANGED, () => this._syncWaterskinGuideState()));
+    this._unsubs.push(on(EVENTS.SAVE_LOADED, () => this._syncWaterskinGuideState()));
+    this._unsubs.push(on(EVENTS.SAVE_LOADED, () => this._syncEnhanceGuideState()));
+    this._unsubs.push(on(EVENTS.STATE_CHANGED, ({ changedKeys } = {}) => {
+      if (!Array.isArray(changedKeys)) return;
+      if (
+        changedKeys.includes('flags')
+        || changedKeys.includes('gold')
+        || changedKeys.includes('enhancementLevels')
+      ) {
+        this._syncEnhanceGuideState();
+      }
+    }));
+    this._syncWaterskinGuideState();
+    this._syncEnhanceGuideState();
   }
 
   _getTitle() { return 'INVENTORY'; }
@@ -77,7 +130,8 @@ export default class InventoryPanel extends ModalPanel {
   _getEvents() {
     return [
       EVENTS.INV_ITEM_ADDED, EVENTS.INV_ITEM_EQUIPPED,
-      EVENTS.INV_ITEM_SOLD, EVENTS.INV_FULL, EVENTS.ENHANCE_PURCHASED, EVENTS.SAVE_LOADED,
+      EVENTS.INV_ITEM_SOLD, EVENTS.INV_FULL, EVENTS.ENHANCE_PURCHASED,
+      EVENTS.ECON_GOLD_GAINED, EVENTS.SAVE_LOADED,
     ];
   }
 
@@ -105,7 +159,7 @@ export default class InventoryPanel extends ModalPanel {
 
     // Equipment section label
     const eqX = panelLeft + 20;
-    const eqY = this._cy - PANEL_H / 2 + 50;
+    const eqY = this._cy - PANEL_H / 2 + 26;
     this._eqLabel = this.scene.add.text(eqX, eqY, 'Equipment', {
       fontFamily: 'monospace', fontSize: '15px', color: '#818cf8',
     });
@@ -116,18 +170,20 @@ export default class InventoryPanel extends ModalPanel {
     this._sepLine = this.scene.add.rectangle(sepX, this._cy, 1, PANEL_H - 30, 0x444444);
     this._modalObjects.push(this._sepLine);
 
-    // Inventory section label
-    const invX = panelLeft + 360;
-    const invY = this._cy - PANEL_H / 2 + 50;
-    this._invLabel = this.scene.add.text(invX, invY, 'Inventory', {
-      fontFamily: 'monospace', fontSize: '15px', color: '#818cf8',
-    });
-    this._modalObjects.push(this._invLabel);
   }
 
   _open() {
     this._selectedItemId = null;
     this._selectedEquippedSlotId = null;
+    this._sellModeActive = false;
+    if (this._waterskinGuideState === 'button') {
+      this._waterskinGuideState = 'item';
+    }
+    if (this._enhanceGuideState === ENHANCE_GUIDE_STAGES.BUTTON) {
+      this._setEnhanceGuideStage(ENHANCE_GUIDE_STAGES.SLOT);
+      this._enhanceGuideState = ENHANCE_GUIDE_STAGES.SLOT;
+    }
+    this._syncInventoryButtonPulse();
     super._open();
   }
 
@@ -136,6 +192,22 @@ export default class InventoryPanel extends ModalPanel {
     if (this._dragGhost) { this._dragGhost.destroy(); this._dragGhost = null; }
     this._dragData = null;
     this._pendingClick = null;
+    this._sellModeActive = false;
+    this._inventoryGridRect = null;
+    this._stopWaterskinSlotPulse();
+    this._stopEnhanceSlotPulse();
+    this._stopEnhanceButtonPulse();
+    if (this._waterskinGuideState === 'item') {
+      this._waterskinGuideState = 'button';
+    }
+    if (
+      this._enhanceGuideState === ENHANCE_GUIDE_STAGES.SLOT
+      || this._enhanceGuideState === ENHANCE_GUIDE_STAGES.ENHANCE
+    ) {
+      this._setEnhanceGuideStage(ENHANCE_GUIDE_STAGES.BUTTON);
+      this._enhanceGuideState = ENHANCE_GUIDE_STAGES.BUTTON;
+    }
+    this._syncInventoryButtonPulse();
     this._selectedItemId = null;
     this._selectedEquippedSlotId = null;
     super._close();
@@ -158,6 +230,9 @@ export default class InventoryPanel extends ModalPanel {
     // and gets replaced naturally on the next pointerover
     this._equipSlotBgs = {};
     this._pendingClick = null;
+    this._stopWaterskinSlotPulse();
+    this._stopEnhanceSlotPulse();
+    this._stopEnhanceButtonPulse();
 
     // Update silhouette texture to match active armor set
     const armorSet = getActiveArmorSet(Store.getState().equipped, parseStackKey);
@@ -180,6 +255,208 @@ export default class InventoryPanel extends ModalPanel {
     }
   }
 
+  _syncWaterskinGuideState() {
+    const state = Store.getState();
+    const guideDone = !!state?.flags?.waterskinEquipHintDone;
+    const hasEquipped = !!state?.equipped?.waterskin;
+    const hasWaterskinInInventory = Object.keys(state?.inventoryStacks || {})
+      .some((stackKey) => parseStackKey(stackKey).itemId === WATERSKIN_ITEM_ID);
+    const prevState = this._waterskinGuideState;
+
+    if (guideDone || hasEquipped) {
+      this._waterskinGuideState = 'done';
+    } else if (!hasWaterskinInInventory) {
+      this._waterskinGuideState = 'inactive';
+    } else {
+      this._waterskinGuideState = this._isOpen ? 'item' : 'button';
+    }
+
+    if (this._waterskinGuideState !== 'item') {
+      this._stopWaterskinSlotPulse();
+    }
+
+    this._syncInventoryButtonPulse();
+
+    if (
+      this._isOpen
+      && prevState !== this._waterskinGuideState
+      && (prevState === 'item' || this._waterskinGuideState === 'item')
+    ) {
+      this._refresh();
+    }
+  }
+
+  _setEnhanceGuideStage(stage) {
+    const state = Store.getState();
+    if (state?.flags?.enhanceTutorialStage === stage) return;
+    Store.setFlag('enhanceTutorialStage', stage);
+  }
+
+  _syncEnhanceGuideState() {
+    const state = Store.getState();
+    const rawStage = state?.flags?.enhanceTutorialStage;
+    const allowedStages = Object.values(ENHANCE_GUIDE_STAGES);
+    const completed = !!state?.flags?.enhanceTutorialCompleted || rawStage === ENHANCE_GUIDE_STAGES.DONE;
+    const stage = completed
+      ? ENHANCE_GUIDE_STAGES.DONE
+      : (allowedStages.includes(rawStage) ? rawStage : ENHANCE_GUIDE_STAGES.INACTIVE);
+    const prevStage = this._enhanceGuideState;
+    this._enhanceGuideState = stage;
+
+    if (stage !== ENHANCE_GUIDE_STAGES.SLOT) this._stopEnhanceSlotPulse();
+    if (stage !== ENHANCE_GUIDE_STAGES.ENHANCE) this._stopEnhanceButtonPulse();
+
+    this._syncInventoryButtonPulse();
+
+    if (
+      this._isOpen
+      && prevStage !== stage
+      && (
+        prevStage === ENHANCE_GUIDE_STAGES.SLOT
+        || prevStage === ENHANCE_GUIDE_STAGES.ENHANCE
+        || stage === ENHANCE_GUIDE_STAGES.SLOT
+        || stage === ENHANCE_GUIDE_STAGES.ENHANCE
+      )
+    ) {
+      this._refresh();
+    }
+  }
+
+  _shouldPulseEnhanceSlot(slotId) {
+    return this._isOpen
+      && this._enhanceGuideState === ENHANCE_GUIDE_STAGES.SLOT
+      && slotId === ENHANCE_GUIDE_TARGET_SLOT;
+  }
+
+  _hasEmptyEquippableSlotOpportunity() {
+    const state = Store.getState();
+    const stacks = state?.inventoryStacks || {};
+    const stackKeys = Object.keys(stacks);
+    if (stackKeys.length === 0) return false;
+
+    const availableItemSlots = new Set();
+    for (const stackKey of stackKeys) {
+      if (!stacks[stackKey] || stacks[stackKey].count <= 0) continue;
+      const item = getItem(stackKey);
+      if (!item || !item.slot) continue;
+      availableItemSlots.add(item.slot);
+    }
+    if (availableItemSlots.size === 0) return false;
+
+    const globalZone = getPlayerGlobalZone();
+    const unlockedSlots = [
+      ...getLeftSlots(globalZone),
+      ...getRightSlots(globalZone),
+      ...getAccessorySlots(),
+    ];
+
+    for (const slotDef of unlockedSlots) {
+      if (!slotDef?.id || !slotDef.itemSlot) continue;
+      if (state.equipped[slotDef.id]) continue;
+      if (availableItemSlots.has(slotDef.itemSlot)) return true;
+    }
+
+    return false;
+  }
+
+  _syncInventoryButtonPulse() {
+    if (!this._toggleBtn) return;
+    const shouldPulse = this._waterskinGuideState === 'button'
+      || this._enhanceGuideState === ENHANCE_GUIDE_STAGES.BUTTON
+      || this._hasEmptyEquippableSlotOpportunity();
+    if (shouldPulse) {
+      this._startInventoryButtonPulse();
+      return;
+    }
+    this._stopInventoryButtonPulse();
+  }
+
+  _startInventoryButtonPulse() {
+    if (!this._toggleBtn || this._inventoryPulseTween) return;
+    this._toggleBtn.setScale(this._inventoryBtnBaseScaleX, this._inventoryBtnBaseScaleY);
+    this._inventoryPulseTween = this.scene.tweens.add({
+      targets: this._toggleBtn,
+      scaleX: this._inventoryBtnBaseScaleX * 1.12,
+      scaleY: this._inventoryBtnBaseScaleY * 1.12,
+      duration: 680,
+      ease: 'Sine.easeInOut',
+      yoyo: true,
+      repeat: -1,
+    });
+  }
+
+  _stopInventoryButtonPulse() {
+    if (this._inventoryPulseTween) {
+      this._inventoryPulseTween.stop();
+      this._inventoryPulseTween = null;
+    }
+    if (this._toggleBtn) {
+      this.scene.tweens.killTweensOf(this._toggleBtn);
+      this._toggleBtn.setScale(this._inventoryBtnBaseScaleX, this._inventoryBtnBaseScaleY);
+    }
+  }
+
+  _stopWaterskinSlotPulse() {
+    if (!this._waterskinSlotPulseTween) return;
+    this._waterskinSlotPulseTween.stop();
+    this._waterskinSlotPulseTween = null;
+  }
+
+  _stopEnhanceSlotPulse() {
+    if (!this._enhanceSlotPulseTween) return;
+    this._enhanceSlotPulseTween.stop();
+    this._enhanceSlotPulseTween = null;
+  }
+
+  _startEnhanceButtonPulse(btn) {
+    if (!btn) return;
+    this._stopEnhanceButtonPulse();
+    btn.setScale(1, 1);
+    this._enhanceButtonRef = btn;
+    this._enhanceButtonPulseTween = this.scene.tweens.add({
+      targets: btn,
+      scaleX: 1.12,
+      scaleY: 1.12,
+      duration: 520,
+      ease: 'Sine.easeInOut',
+      yoyo: true,
+      repeat: -1,
+    });
+  }
+
+  _stopEnhanceButtonPulse() {
+    if (this._enhanceButtonPulseTween) {
+      this._enhanceButtonPulseTween.stop();
+      this._enhanceButtonPulseTween = null;
+    }
+    if (this._enhanceButtonRef) {
+      this.scene.tweens.killTweensOf(this._enhanceButtonRef);
+      this._enhanceButtonRef.setScale(1, 1);
+      this._enhanceButtonRef = null;
+    }
+  }
+
+  _shouldPulseWaterskinStack(stackKey) {
+    if (this._waterskinGuideState !== 'item' || !this._isOpen) return false;
+    return parseStackKey(stackKey).itemId === WATERSKIN_ITEM_ID;
+  }
+
+  _setSellMode(active) {
+    const next = !!active;
+    if (this._sellModeActive === next) return;
+    this._sellModeActive = next;
+    if (next) {
+      this._selectedItemId = null;
+      this._selectedEquippedSlotId = null;
+      this._hideTooltip();
+    }
+    this._refresh();
+  }
+
+  _isPointerInInventoryGrid(x, y) {
+    return !!(this._inventoryGridRect && this._inventoryGridRect.contains(x, y));
+  }
+
   // --- Equipment Silhouette (left zone) ---
 
   _renderEquipmentSilhouette() {
@@ -192,19 +469,14 @@ export default class InventoryPanel extends ModalPanel {
     const silCx = this._silCx;
     const silCy = this._silCy;
 
-    // Connector lines graphics
-    const gfx = this.scene.add.graphics();
-    gfx.lineStyle(1, 0x555566, 0.6);
-    this._dynamicObjects.push(gfx);
-
     // Left column — flush to left edge of panel
     const panelLeft = this._cx - PANEL_W / 2;
     const leftX = panelLeft + 10;
-    this._layoutColumn(leftSlots, leftX, silCy, state, gfx, silCx, silCy, 'left');
+    this._layoutColumn(leftSlots, leftX, silCy, state);
 
     // Right column — flush to right edge of equipment zone (separator at panelLeft + 345)
     const rightX = panelLeft + 345 - EQ_W - 10;
-    this._layoutColumn(rightSlots, rightX, silCy, state, gfx, silCx, silCy, 'right');
+    this._layoutColumn(rightSlots, rightX, silCy, state);
 
     // Accessory grid — bottom row
     if (accSlots.length > 0) {
@@ -215,14 +487,8 @@ export default class InventoryPanel extends ModalPanel {
   /**
    * Stack slots vertically in a column, centered on silCy.
    */
-  _layoutColumn(slots, x, centerY, state, gfx, silCx, silCy, side) {
+  _layoutColumn(slots, x, centerY, state) {
     if (slots.length === 0) return;
-
-    // Panel bounds for clamping connector line endpoints
-    const panelLeft = this._cx - PANEL_W / 2;
-    const panelTop = this._cy - PANEL_H / 2 + 40; // below title
-    const panelBottom = this._cy + PANEL_H / 2 - 10;
-    const leftZoneRight = panelLeft + 340;
 
     const totalH = slots.length * EQ_H + (slots.length - 1) * EQ_GAP;
     let y = centerY - totalH / 2;
@@ -233,25 +499,6 @@ export default class InventoryPanel extends ModalPanel {
       const rarity = stackKey ? parseStackKey(stackKey).rarity : null;
 
       this._createEquipSlotSmall(x, y, slotDef, item, rarity, stackKey);
-
-      // Connector line from slot edge to body anchor (clamped to panel bounds)
-      if (slotDef.anchor) {
-        const rawAnchorX = silCx + slotDef.anchor.x;
-        const rawAnchorY = silCy + slotDef.anchor.y;
-        const anchorX = Math.max(panelLeft + 5, Math.min(rawAnchorX, leftZoneRight - 5));
-        const anchorY = Math.max(panelTop, Math.min(rawAnchorY, panelBottom));
-        const lineStartX = side === 'left' ? x + EQ_W : x;
-        const lineStartY = y + EQ_H / 2;
-
-        gfx.beginPath();
-        gfx.moveTo(lineStartX, lineStartY);
-        gfx.lineTo(anchorX, anchorY);
-        gfx.strokePath();
-
-        // Small dot at anchor point
-        gfx.fillStyle(0x555566, 0.8);
-        gfx.fillCircle(anchorX, anchorY, 2);
-      }
 
       y += EQ_H + EQ_GAP;
     }
@@ -292,15 +539,38 @@ export default class InventoryPanel extends ModalPanel {
       x + EQ_W / 2, y + EQ_H / 2, EQ_W, EQ_H, 0x3a3a4e
     );
     bg.setStrokeStyle(borderWidth, rarityColor);
-    bg.setInteractive({ useHandCursor: !!item });
+    bg.setInteractive({ useHandCursor: true });
     this._dynamicObjects.push(bg);
     this._equipSlotBgs[slotDef.id] = { bg, borderWidth, borderColor: rarityColor };
 
-    // Slot label (top-left, 8px grey)
-    const label = this.scene.add.text(x + 3, y + 2, slotDef.label.toUpperCase(), {
-      fontFamily: 'monospace', fontSize: '10px', color: '#666666',
-    });
-    this._dynamicObjects.push(label);
+    // Slot label: show only on empty slots, brighter for readability.
+    if (!item) {
+      const label = this.scene.add.text(x + 3, y + 2, slotDef.label.toUpperCase(), {
+        fontFamily: 'monospace', fontSize: '10px', color: '#cbd5e1',
+      });
+      this._dynamicObjects.push(label);
+    }
+
+    if (this._shouldPulseEnhanceSlot(slotDef.id)) {
+      const pulseRing = this.scene.add.rectangle(
+        x + EQ_W / 2, y + EQ_H / 2, EQ_W + 10, EQ_H + 10
+      );
+      pulseRing.setStrokeStyle(3, 0x38bdf8);
+      pulseRing.setFillStyle(0x000000, 0);
+      pulseRing.setAlpha(0.4);
+      pulseRing.setDepth(80);
+      this._dynamicObjects.push(pulseRing);
+      this._enhanceSlotPulseTween = this.scene.tweens.add({
+        targets: pulseRing,
+        alpha: { from: 0.25, to: 1 },
+        scaleX: { from: 1, to: 1.1 },
+        scaleY: { from: 1, to: 1.1 },
+        duration: 640,
+        ease: 'Sine.easeInOut',
+        yoyo: true,
+        repeat: -1,
+      });
+    }
 
     if (item) {
       const enhancementLevel = EnhancementManager.getLevel(slotDef.id);
@@ -331,19 +601,6 @@ export default class InventoryPanel extends ModalPanel {
         ).setOrigin(0.5);
         this._dynamicObjects.push(nameText);
       }
-
-      bg.on('pointerdown', (pointer) => {
-        const quickUnequip = pointer.rightButtonDown() || pointer.event.shiftKey;
-        if (quickUnequip) {
-          pointer.event.preventDefault();
-          InventorySystem.unequipItem(slotDef.id);
-          if (this._selectedEquippedSlotId === slotDef.id) this._selectedEquippedSlotId = null;
-          return;
-        }
-        this._selectedItemId = null;
-        this._selectedEquippedSlotId = slotDef.id;
-        this._refresh();
-      });
       bg.on('pointerover', () => {
         bg.setStrokeStyle(3, 0xffffff);
         this._showTooltip(stackKey, rarity, slotDef, true);
@@ -359,6 +616,34 @@ export default class InventoryPanel extends ModalPanel {
       ).setOrigin(0.5);
       this._dynamicObjects.push(emptyText);
     }
+
+    bg.on('pointerdown', (pointer) => {
+      if (this._sellModeActive) {
+        this._setSellMode(false);
+        return;
+      }
+
+      if (item) {
+        const quickUnequip = pointer.rightButtonDown() || pointer.event.shiftKey;
+        if (quickUnequip) {
+          pointer.event.preventDefault();
+          InventorySystem.unequipItem(slotDef.id);
+          if (this._selectedEquippedSlotId === slotDef.id) this._selectedEquippedSlotId = null;
+          return;
+        }
+      }
+
+      this._selectedItemId = null;
+      this._selectedEquippedSlotId = slotDef.id;
+      if (
+        slotDef.id === ENHANCE_GUIDE_TARGET_SLOT
+        && this._enhanceGuideState === ENHANCE_GUIDE_STAGES.SLOT
+      ) {
+        this._setEnhanceGuideStage(ENHANCE_GUIDE_STAGES.ENHANCE);
+        this._enhanceGuideState = ENHANCE_GUIDE_STAGES.ENHANCE;
+      }
+      this._refresh();
+    });
   }
 
   /**
@@ -376,10 +661,12 @@ export default class InventoryPanel extends ModalPanel {
     bg.setInteractive({ useHandCursor: !!item });
     this._dynamicObjects.push(bg);
 
-    const label = this.scene.add.text(x + 3, y + 1, slotDef.label.toUpperCase(), {
-      fontFamily: 'monospace', fontSize: '9px', color: '#666666',
-    });
-    this._dynamicObjects.push(label);
+    if (!item) {
+      const label = this.scene.add.text(x + 3, y + 1, slotDef.label.toUpperCase(), {
+        fontFamily: 'monospace', fontSize: '9px', color: '#cbd5e1',
+      });
+      this._dynamicObjects.push(label);
+    }
 
     if (item) {
       const nameText = this.scene.add.text(
@@ -393,7 +680,13 @@ export default class InventoryPanel extends ModalPanel {
       ).setOrigin(0.5);
       this._dynamicObjects.push(nameText);
 
-      bg.on('pointerdown', () => InventorySystem.unequipItem(slotDef.id));
+      bg.on('pointerdown', () => {
+        if (this._sellModeActive) {
+          this._setSellMode(false);
+          return;
+        }
+        InventorySystem.unequipItem(slotDef.id);
+      });
       bg.on('pointerover', () => bg.setStrokeStyle(3, 0xffffff));
       bg.on('pointerout', () => bg.setStrokeStyle(borderWidth, rarityColor));
     } else {
@@ -414,7 +707,10 @@ export default class InventoryPanel extends ModalPanel {
 
     const panelLeft = this._cx - PANEL_W / 2;
     const gridOriginX = panelLeft + 360;
-    const gridOriginY = this._cy - PANEL_H / 2 + 75;
+    const gridOriginY = this._cy - PANEL_H / 2 + 85;
+    const gridW = GRID_COLS * SLOT_SIZE + (GRID_COLS - 1) * SLOT_GAP;
+    const gridH = GRID_ROWS * SLOT_SIZE + (GRID_ROWS - 1) * SLOT_GAP;
+    this._inventoryGridRect = new Phaser.Geom.Rectangle(gridOriginX, gridOriginY, gridW, gridH);
 
     // Count label
     const countText = this.scene.add.text(
@@ -429,17 +725,34 @@ export default class InventoryPanel extends ModalPanel {
     const sellY = this._cy - PANEL_H / 2 + 42;
     const sellW = 56;
     const sellH = 38;
+    const goldLabel = this.scene.add.text(
+      sellX - (sellW / 2) - 10,
+      sellY + (sellH / 2),
+      `Gold: ${format(state.gold)}`,
+      { fontFamily: 'monospace', fontSize: '12px', color: '#facc15', fontStyle: 'bold' }
+    ).setOrigin(1, 0.5);
+    this._dynamicObjects.push(goldLabel);
     const sellBg = this.scene.add.rectangle(
       sellX + sellW / 2, sellY + sellH / 2, sellW, sellH, 0x3a3a4e
     );
-    sellBg.setStrokeStyle(1, 0x8b5e1a);
+    const sellBorderColor = this._sellModeActive ? 0xfacc15 : 0x8b5e1a;
+    const sellFillColor = this._sellModeActive ? 0x4a3410 : 0x3a3a4e;
+    sellBg.setStrokeStyle(2, sellBorderColor);
+    sellBg.setFillStyle(sellFillColor);
+    sellBg.setInteractive({ useHandCursor: true });
     this._dynamicObjects.push(sellBg);
     const sellLabel = this.scene.add.text(
-      sellX + sellW / 2, sellY + sellH / 2, 'SELL',
-      { fontFamily: 'monospace', fontSize: '12px', color: '#eab308', fontStyle: 'bold' }
-    ).setOrigin(0.5);
+      sellX + sellW / 2, sellY + sellH / 2, this._sellModeActive ? 'SELL ON' : 'SELL',
+      { fontFamily: 'monospace', fontSize: '11px', color: '#eab308', fontStyle: 'bold' }
+    ).setOrigin(0.5).setInteractive({ useHandCursor: true });
     this._dynamicObjects.push(sellLabel);
     this._sellZone = sellBg;
+    const toggleSellMode = (pointer) => {
+      pointer?.event?.stopPropagation?.();
+      this._setSellMode(!this._sellModeActive);
+    };
+    sellBg.on('pointerdown', toggleSellMode);
+    sellLabel.on('pointerdown', toggleSellMode);
 
     for (let row = 0; row < GRID_ROWS; row++) {
       for (let col = 0; col < GRID_COLS; col++) {
@@ -466,8 +779,9 @@ export default class InventoryPanel extends ModalPanel {
 
   _createSlot(x, y, item, stackKey, count, isSelected, rarity) {
     const rarityColor = RARITY_HEX[rarity] || 0xa1a1aa;
-    const borderWidth = isSelected ? 3 : 2;
-    const borderColor = isSelected ? 0xffffff : rarityColor;
+    const inSellMode = this._sellModeActive;
+    const borderWidth = !inSellMode && isSelected ? 3 : 2;
+    const borderColor = inSellMode ? 0xeab308 : (isSelected ? 0xffffff : rarityColor);
 
     const bg = this.scene.add.rectangle(
       x + SLOT_SIZE / 2, y + SLOT_SIZE / 2, SLOT_SIZE, SLOT_SIZE, 0x3a3a4e
@@ -476,7 +790,7 @@ export default class InventoryPanel extends ModalPanel {
     bg.setInteractive({ useHandCursor: true });
     this._dynamicObjects.push(bg);
 
-    if (isSelected) {
+    if (!inSellMode && isSelected) {
       const glow = this.scene.add.rectangle(
         x + SLOT_SIZE / 2, y + SLOT_SIZE / 2, SLOT_SIZE + 6, SLOT_SIZE + 6
       );
@@ -511,6 +825,51 @@ export default class InventoryPanel extends ModalPanel {
         { fontFamily: 'monospace', fontSize: '12px', color: '#eab308', fontStyle: 'bold' }
       ).setOrigin(1, 1);
       this._dynamicObjects.push(badge);
+    }
+
+    if (this._shouldPulseWaterskinStack(stackKey)) {
+      const pulseRing = this.scene.add.rectangle(
+        x + SLOT_SIZE / 2, y + SLOT_SIZE / 2, SLOT_SIZE + 12, SLOT_SIZE + 12
+      );
+      pulseRing.setStrokeStyle(3, 0x38bdf8);
+      pulseRing.setFillStyle(0x000000, 0);
+      pulseRing.setAlpha(0.35);
+      pulseRing.setDepth(50);
+      this._dynamicObjects.push(pulseRing);
+      this._waterskinSlotPulseTween = this.scene.tweens.add({
+        targets: pulseRing,
+        alpha: { from: 0.25, to: 1 },
+        scaleX: { from: 1, to: 1.08 },
+        scaleY: { from: 1, to: 1.08 },
+        duration: 680,
+        ease: 'Sine.easeInOut',
+        yoyo: true,
+        repeat: -1,
+      });
+    }
+
+    if (inSellMode) {
+      const scaled = getScaledItem(stackKey, rarity);
+      const totalGold = (scaled?.sellValue || 0) * count;
+      const sellTagBg = this.scene.add.rectangle(
+        x + SLOT_SIZE / 2, y + SLOT_SIZE - 12, SLOT_SIZE - 8, 18, 0x111111, 0.88
+      );
+      sellTagBg.setStrokeStyle(1, 0x8b5e1a);
+      this._dynamicObjects.push(sellTagBg);
+      const sellTagText = this.scene.add.text(
+        x + SLOT_SIZE / 2, y + SLOT_SIZE - 12, `${totalGold}g`,
+        { fontFamily: 'monospace', fontSize: '11px', color: '#facc15', fontStyle: 'bold' }
+      ).setOrigin(0.5);
+      this._dynamicObjects.push(sellTagText);
+
+      bg.on('pointerdown', () => {
+        InventorySystem.sellItem(stackKey, count);
+        if (this._selectedItemId === stackKey) this._selectedItemId = null;
+        this._selectedEquippedSlotId = null;
+      });
+      bg.on('pointerover', () => bg.setStrokeStyle(3, 0xfde047));
+      bg.on('pointerout', () => bg.setStrokeStyle(borderWidth, borderColor));
+      return;
     }
 
     // Defer select/equip to pointerup so the bg survives long enough for drag
@@ -655,41 +1014,41 @@ export default class InventoryPanel extends ModalPanel {
 
     if (this._selectedEquippedSlotId) {
       const slotId = this._selectedEquippedSlotId;
+      const slotDef = getSlotById(slotId);
       const stackKey = state.equipped[slotId];
-      if (!stackKey) {
-        this._selectedEquippedSlotId = null;
-        return;
-      }
+      const rarity = stackKey ? (parseStackKey(stackKey).rarity || 'common') : 'common';
+      const scaled = stackKey ? getScaledItem(stackKey, rarity) : null;
+      const rarityColor = scaled ? (COLORS.rarity[rarity] || '#a1a1aa') : '#cbd5e1';
+      const headerLine = scaled
+        ? `${scaled.name}  ${rarity} ${scaled.slot}  ${renderStatLabel(scaled)}`
+        : `${slotDef?.label || slotId}  empty slot`;
 
-      const rarity = parseStackKey(stackKey).rarity || 'common';
-      const scaled = getScaledItem(stackKey, rarity);
-      if (!scaled) return;
-
-      const rarityColor = COLORS.rarity[rarity] || '#a1a1aa';
-      const statStr = renderStatLabel(scaled);
-      const headerText = this.scene.add.text(
-        detailX, detailY,
-        `${scaled.name}  ${rarity} ${scaled.slot}  ${statStr}`,
-        { fontFamily: 'monospace', fontSize: '13px', color: rarityColor }
-      );
+      const headerText = this.scene.add.text(detailX, detailY, headerLine, {
+        fontFamily: 'monospace', fontSize: '13px', color: rarityColor,
+      });
       this._dynamicObjects.push(headerText);
 
-      const descText = this.scene.add.text(
-        detailX, detailY + 16, `"${scaled.description}"`,
-        {
-          fontFamily: 'monospace', fontSize: '12px', color: '#888888',
-          fontStyle: 'italic', wordWrap: { width: PANEL_W - 400 },
-        }
-      );
+      const descLine = scaled
+        ? `"${scaled.description}"`
+        : 'No item equipped. Enhancing this slot increases stats for future items in this slot.';
+      const descText = this.scene.add.text(detailX, detailY + 16, descLine, {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: scaled ? '#888888' : '#9ca3af',
+        fontStyle: scaled ? 'italic' : 'normal',
+        wordWrap: { width: PANEL_W - 400 },
+      });
       this._dynamicObjects.push(descText);
 
       const level = EnhancementManager.getLevel(slotId);
       const maxLevel = EnhancementManager.getMaxLevel();
       const bonusPct = Math.round((EnhancementManager.getBonusMultiplier(slotId) - 1) * 100);
+      const equipInfoRightX = panelLeft + 336;
+      const equipInfoBottomY = this._cy + PANEL_H / 2 - 52;
       const enhanceInfo = this.scene.add.text(
-        detailX, detailY + 34, `Enhancement: +${level} (${bonusPct}% stats)`,
+        equipInfoRightX, equipInfoBottomY - 14, `Enhancement: +${level} (${bonusPct}% stats)`,
         { fontFamily: 'monospace', fontSize: '11px', color: '#facc15' }
-      );
+      ).setOrigin(1, 1);
       this._dynamicObjects.push(enhanceInfo);
 
       const nextCost = EnhancementManager.getCost(slotId);
@@ -698,33 +1057,59 @@ export default class InventoryPanel extends ModalPanel {
       let statusText = atMax ? 'MAX LEVEL' : `Next: ${nextCost}g`;
       if (!atMax && !state.gold.gte(nextCost)) statusText = `Need: ${nextCost}g`;
       const enhanceStatus = this.scene.add.text(
-        detailX, detailY + 48, statusText,
+        equipInfoRightX, equipInfoBottomY, statusText,
         { fontFamily: 'monospace', fontSize: '10px', color: atMax ? '#666666' : (canEnhance ? '#d1d5db' : '#f87171') }
-      );
+      ).setOrigin(1, 1);
       this._dynamicObjects.push(enhanceStatus);
 
-      let btnX = detailX;
-      const btnY = detailY + 66;
-      const enhanceBtn = makeButton(this.scene, btnX, btnY, '[ENHANCE]', {
+      const btnY = equipInfoBottomY + 10;
+      const enhanceBtn = makeButton(this.scene, 0, btnY, '[ENHANCE]', {
         color: canEnhance ? '#facc15' : '#666666',
         bg: canEnhance ? '#333333' : '#222222',
         onDown: () => {
           if (!EnhancementManager.enhance(slotId)) return;
+          if (
+            slotId === ENHANCE_GUIDE_TARGET_SLOT
+            && this._enhanceGuideState === ENHANCE_GUIDE_STAGES.ENHANCE
+          ) {
+            this._setEnhanceGuideStage(ENHANCE_GUIDE_STAGES.DONE);
+            this._enhanceGuideState = ENHANCE_GUIDE_STAGES.DONE;
+            if (!Store.getState().flags.enhanceTutorialCompleted) {
+              Store.setFlag('enhanceTutorialCompleted', true);
+            }
+          }
           this._refresh();
         },
       });
-      this._dynamicObjects.push(enhanceBtn);
-      btnX += enhanceBtn.width + 8;
 
-      const unequipBtn = makeButton(this.scene, btnX, btnY, 'Unequip', {
-        color: '#22c55e',
-        onDown: () => {
-          InventorySystem.unequipItem(slotId);
-          this._selectedEquippedSlotId = null;
-          this._refresh();
-        },
-      });
-      this._dynamicObjects.push(unequipBtn);
+      this._dynamicObjects.push(enhanceBtn);
+      if (stackKey) {
+        const unequipBtn = makeButton(this.scene, 0, btnY, 'Unequip', {
+          color: '#22c55e',
+          onDown: () => {
+            InventorySystem.unequipItem(slotId);
+            this._selectedEquippedSlotId = null;
+            this._refresh();
+          },
+        });
+
+        const btnGap = 8;
+        const totalBtnW = enhanceBtn.width + btnGap + unequipBtn.width;
+        const btnStartX = equipInfoRightX - totalBtnW;
+        enhanceBtn.setX(btnStartX);
+        unequipBtn.setX(btnStartX + enhanceBtn.width + btnGap);
+        this._dynamicObjects.push(unequipBtn);
+      } else {
+        enhanceBtn.setX(equipInfoRightX - enhanceBtn.width);
+      }
+
+      if (
+        this._enhanceGuideState === ENHANCE_GUIDE_STAGES.ENHANCE
+        && slotId === ENHANCE_GUIDE_TARGET_SLOT
+        && canEnhance
+      ) {
+        this._startEnhanceButtonPulse(enhanceBtn);
+      }
       return;
     }
 
@@ -889,23 +1274,34 @@ export default class InventoryPanel extends ModalPanel {
     const compStats = equippedScaled
       ? applyMultiplier(equippedScaled.statBonuses, slotEnhMult)
       : null;
+    const statKeys = Array.from(new Set([
+      ...Object.keys(stats),
+      ...(compStats ? Object.keys(compStats) : []),
+    ]));
     const maxStatW = TT_W - PAD * 2;
     let sx = PAD;
     let sy = PAD + 16;
 
-    for (const [key, val] of Object.entries(stats)) {
-      if (Math.abs(val) < EPS) continue;
-      if (isWpn && key === 'str' && stats.atk === stats.str) continue;
+    for (const key of statKeys) {
+      const val = stats[key] || 0;
+      const eqVal = compStats ? (compStats[key] || 0) : 0;
+      const diff = val - eqVal;
+      if (Math.abs(val) < EPS && (!compStats || Math.abs(diff) < EPS)) continue;
+      if (
+        isWpn
+        && key === 'str'
+        && Math.abs((stats.atk || 0) - (stats.str || 0)) < EPS
+        && (!compStats || Math.abs((compStats.atk || 0) - (compStats.str || 0)) < EPS)
+      ) continue;
 
       const label = STAT_LABELS[key] || key.toUpperCase();
-      const mainT = _tt(sx, sy, `+${formatStat(val)} ${label}`, {
+      const mainValue = Math.abs(val) < EPS ? '0' : `${val > 0 ? '+' : ''}${formatStat(val)}`;
+      const mainT = _tt(sx, sy, `${mainValue} ${label}`, {
         fontSize: '11px', color: '#cccccc',
       });
       sx += mainT.width + 3;
 
       if (compStats) {
-        const eqVal = compStats[key] || 0;
-        const diff = val - eqVal;
         if (diff > EPS) {
           const d = _tt(sx, sy, `+${formatStat(diff)}`, { fontSize: '11px', color: '#22c55e' });
           sx += d.width + 6;
@@ -974,5 +1370,18 @@ export default class InventoryPanel extends ModalPanel {
     if (x < 0) x = 0;
     if (y < 0) y = 0;
     container.setPosition(x, y);
+  }
+
+  destroy() {
+    this._hideTooltip();
+    this._stopInventoryButtonPulse();
+    this._stopWaterskinSlotPulse();
+    this._stopEnhanceSlotPulse();
+    this._stopEnhanceButtonPulse();
+    if (this._globalPointerDownHandler) {
+      this.scene.input.off('pointerdown', this._globalPointerDownHandler);
+      this._globalPointerDownHandler = null;
+    }
+    super.destroy();
   }
 }

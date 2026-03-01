@@ -8,9 +8,9 @@ import { getUnlockedEnemies } from './areas.js';
 
 const ENCOUNTERS = [
   // -- Area 1: The Whispering Woods (global zones 1-10) --------------------
-  { id: 'a1_rat_pair', members: ['a1_rat', 'a1_rat'], weight: 2, zones: [2, 5], attackSpeedMult: 1.0, rewardMult: 1.1, lootBonus: { dropChanceMult: 1.0, rarityBoost: 0 } },
+  { id: 'a1_rat_pair', members: ['a1_rat', 'a1_rat'], weight: 2, zones: [2, 2], attackSpeedMult: 1.0, rewardMult: 1.1, lootBonus: { dropChanceMult: 1.0, rarityBoost: 0 } },
   { id: 'a1_rat_pack', members: ['a1_rat', 'a1_rat', 'a1_rat'], weight: 1, zones: [3, 5], attackSpeedMult: 1.0, rewardMult: 1.25, lootBonus: { dropChanceMult: 1.0, rarityBoost: 0 } },
-  { id: 'a1_slime_pair', members: ['a1_slime', 'a1_slime'], weight: 2, zones: [2, 5], attackSpeedMult: 1.0, rewardMult: 1.1, lootBonus: { dropChanceMult: 1.0, rarityBoost: 0 } },
+  { id: 'a1_slime_pair', members: ['a1_slime', 'a1_slime'], weight: 2, zones: [2, 3], attackSpeedMult: 1.0, rewardMult: 1.1, lootBonus: { dropChanceMult: 1.0, rarityBoost: 0 } },
   { id: 'a1_hound_pair', members: ['a1_feral_hound', 'a1_feral_hound'], weight: 1, zones: [3, 5], attackSpeedMult: 0.9, rewardMult: 1.2, lootBonus: { dropChanceMult: 1.05, rarityBoost: 0 } },
   { id: 'a1_hound_slime_mix', members: ['a1_feral_hound', 'a1_slime'], weight: 2, zones: [3, 5], attackSpeedMult: 1.0, rewardMult: 1.15, lootBonus: { dropChanceMult: 1.0, rarityBoost: 0 } },
   { id: 'a1_beetle_duo', members: ['a2_giant_beetle', 'a2_giant_beetle'], weight: 1, zones: [6, 10], attackSpeedMult: 0.85, rewardMult: 1.3, lootBonus: { dropChanceMult: 1.15, rarityBoost: 0.02 } },
@@ -100,6 +100,13 @@ export function getEncountersForZone(areaId, zoneNum) {
   // 2. Add solo wrappers for all unlocked enemies at this zone.
   const enemies = getUnlockedEnemies(areaId, zoneNum);
   for (const enemy of enemies) {
+    if (areaId === 1) {
+      // Area 1 spawn shaping:
+      // - no solo rat from zone 2+
+      // - no solo slime (all variants share a1_slime id) from zone 3+
+      if (enemy.id === 'a1_rat' && zoneNum >= 2) continue;
+      if (enemy.id === 'a1_slime' && zoneNum >= 3) continue;
+    }
     pool.push({ template: getSoloEncounter(enemy), weight: 3 });
   }
 

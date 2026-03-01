@@ -1,4 +1,4 @@
-import { on, EVENTS } from '../events.js';
+import { emit, on, EVENTS } from '../events.js';
 import { WORLD } from '../config.js';
 
 export default class OnboardingPopup {
@@ -7,6 +7,7 @@ export default class OnboardingPopup {
     this._isOpen = false;
     this._objects = [];
     this._pausedGameScene = false;
+    this._activePopupId = null;
     this._unsubs = [
       on(EVENTS.UI_ONBOARDING_REQUESTED, (payload) => this.open(payload)),
     ];
@@ -20,6 +21,7 @@ export default class OnboardingPopup {
 
     this.scene.closeAllModals?.(this);
     this._isOpen = true;
+    this._activePopupId = payload.id || null;
 
     if (!this.scene.scene.isPaused('GameScene')) {
       this.scene.scene.pause('GameScene');
@@ -90,6 +92,9 @@ export default class OnboardingPopup {
       this.scene.scene.resume('GameScene');
       this._pausedGameScene = false;
     }
+
+    emit(EVENTS.UI_ONBOARDING_DISMISSED, { id: this._activePopupId });
+    this._activePopupId = null;
   }
 
   destroy() {

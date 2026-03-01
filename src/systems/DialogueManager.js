@@ -3,6 +3,8 @@
 
 import Store from './Store.js';
 import TimeEngine from './TimeEngine.js';
+import EnhancementManager from './EnhancementManager.js';
+import { parseStackKey } from './InventorySystem.js';
 import { createScope, emit, EVENTS } from '../events.js';
 import { getCheat } from '../data/cheats.js';
 import {
@@ -55,6 +57,10 @@ const UNLOCK_SEQUENCE_BY_SKILL = {
   },
 };
 const GAME_COMPLETE_AREA = 2;
+const WATERSKIN_ITEM_ID = 'a1_rotfang_waterskin';
+const ENHANCE_TUTORIAL_SLOT_IDS = ['head', 'chest', 'main_hand', 'legs', 'boots', 'gloves', 'amulet'];
+const ENHANCE_TUTORIAL_POPUP_GOLD = 'enhance_tutorial_gold_line';
+const ENHANCE_TUTORIAL_POPUP_SLOT = 'enhance_tutorial_slot_line';
 
 function isOnCooldown(key, durationMs) {
   const last = cooldowns[key] || 0;
@@ -71,6 +77,45 @@ function pick(arr) {
 
 function say(text, emotion = 'sarcastic', context) {
   emit(EVENTS.DIALOGUE_QUEUED, { text, emotion, context });
+}
+
+function setFlagIfChanged(key, value) {
+  const state = Store.getState();
+  if (state?.flags?.[key] === value) return;
+  Store.setFlag(key, value);
+}
+
+function getEnhanceTutorialKillCount() {
+  const state = Store.getState();
+  const value = Number(state?.flags?.enhanceTutorialZone3KillCount || 0);
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value));
+}
+
+function canAffordAnyEnhancement() {
+  for (const slotId of ENHANCE_TUTORIAL_SLOT_IDS) {
+    const cost = EnhancementManager.getCost(slotId);
+    if (cost <= 0) continue;
+    if (EnhancementManager.canEnhance(slotId)) return true;
+  }
+  return false;
+}
+
+function maybeTriggerEnhancementTutorialIntro() {
+  const state = Store.getState();
+  if (!state) return;
+  if (state.flags.enhanceTutorialIntroShown || state.flags.enhanceTutorialCompleted) return;
+  if (state.currentArea !== 1 || state.currentZone !== 3) return;
+  if (getEnhanceTutorialKillCount() < 3) return;
+  if (!canAffordAnyEnhancement()) return;
+
+  setFlagIfChanged('enhanceTutorialIntroShown', true);
+  emit(EVENTS.UI_HIGHLIGHT_GOLD, { durationMs: 2600 });
+  emit(EVENTS.UI_ONBOARDING_REQUESTED, {
+    id: ENHANCE_TUTORIAL_POPUP_GOLD,
+    title: 'SYSTEM',
+    lines: ["Hey, that's a lot of gold you've got up there."],
+  });
 }
 
 function clearSequenceTimers() {
@@ -116,6 +161,44 @@ const DialogueManager = {
       if (!state.flags.firstKill) {
         Store.setFlag('firstKill', true);
         say(pick(FIRST_KILL), 'sarcastic', `${data.name} defeated!`);
+      }
+    });
+
+    // Equipment slot enhancement tutorial (Area 1, Zone 3, after 3 regular kills).
+    scope.on(EVENTS.COMBAT_ENEMY_KILLED, (data) => {
+      if (data?.despawned || data?.isBoss) return;
+      const state = Store.getState();
+      if (state.currentArea !== 1 || state.currentZone !== 3) return;
+      if (state.flags.enhanceTutorialCompleted || state.flags.enhanceTutorialIntroShown) return;
+
+      const nextKills = Math.min(3, getEnhanceTutorialKillCount() + 1);
+      setFlagIfChanged('enhanceTutorialZone3KillCount', nextKills);
+      maybeTriggerEnhancementTutorialIntro();
+    });
+
+    scope.on(EVENTS.ECON_GOLD_GAINED, () => {
+      maybeTriggerEnhancementTutorialIntro();
+    });
+
+    scope.on(EVENTS.UI_ONBOARDING_DISMISSED, ({ id } = {}) => {
+      if (id === ENHANCE_TUTORIAL_POPUP_GOLD) {
+        emit(EVENTS.UI_HIGHLIGHT_GOLD, { active: false });
+        // Arm guidance immediately so the inventory pulse can't get lost if
+        // follow-up popup dismiss events are missed or reordered.
+        setFlagIfChanged('enhanceTutorialStage', 'button');
+        emit(EVENTS.UI_ONBOARDING_REQUESTED, {
+          id: ENHANCE_TUTORIAL_POPUP_SLOT,
+          title: 'SYSTEM',
+          lines: ['You know, you could probably upgrade those equipment slots with all that cash.'],
+        });
+        return;
+      }
+
+      if (id === ENHANCE_TUTORIAL_POPUP_SLOT) {
+        const state = Store.getState();
+        if (!state.flags.enhanceTutorialCompleted) {
+          setFlagIfChanged('enhanceTutorialStage', 'button');
+        }
       }
     });
 
@@ -187,6 +270,42 @@ const DialogueManager = {
         Store.setFlag('firstSell', true);
         say(pick(FIRST_SELL), 'sarcastic', 'Item sold');
       }
+    });
+
+    // Waterskin teaching popups.
+    scope.on(EVENTS.INV_ITEM_ADDED, ({ itemId } = {}) => {
+      const state = Store.getState();
+      if (state.flags.waterskinDropPopupShown) return;
+      if (!itemId) return;
+      const parsed = parseStackKey(itemId);
+      if (parsed.itemId !== WATERSKIN_ITEM_ID) return;
+
+      Store.setFlag('waterskinDropPopupShown', true);
+      emit(EVENTS.UI_ONBOARDING_REQUESTED, {
+        title: 'SYSTEM',
+        lines: [
+          'The Unfriendly Slime dropped something.',
+          'You should probably check your inventory and see what it does.',
+        ],
+      });
+    });
+
+    scope.on(EVENTS.INV_ITEM_EQUIPPED, ({ slot, itemId } = {}) => {
+      const state = Store.getState();
+      if (state.flags.waterskinDrinkPopupShown) return;
+      if (slot !== 'waterskin' || !itemId) return;
+      const parsed = parseStackKey(itemId);
+      if (parsed.itemId !== WATERSKIN_ITEM_ID) return;
+
+      Store.setFlag('waterskinDrinkPopupShown', true);
+      emit(EVENTS.UI_ONBOARDING_REQUESTED, {
+        title: 'SYSTEM',
+        lines: [
+          'You can now drink from the waterskin.',
+          "That's totally fine. Definitely okay to drink.",
+          'Hey, it even restores your health!',
+        ],
+      });
     });
 
     // Inventory full (repeatable).
@@ -360,6 +479,8 @@ const DialogueManager = {
     if (offlineResult && offlineResult.elapsedMs > 5 * 60 * 1000) {
       say(pick(OFFLINE_RETURN), 'sarcastic', `Away ${offlineResult.durationText}`);
     }
+
+    maybeTriggerEnhancementTutorialIntro();
   },
 
   destroy() {

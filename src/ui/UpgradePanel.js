@@ -1,8 +1,9 @@
 ﻿// UpgradePanel - modal overlay for purchasing stat and skill tier upgrades.
 // Toggle via SKILLS button or U key.
 
+import Phaser from 'phaser';
 import ModalPanel from './ModalPanel.js';
-import { emit, EVENTS } from '../events.js';
+import { emit, on, EVENTS } from '../events.js';
 import Store from '../systems/Store.js';
 import UpgradeManager from '../systems/UpgradeManager.js';
 import CombatEngine from '../systems/CombatEngine.js';
@@ -19,6 +20,7 @@ import { COMBAT_V2, LAYOUT, STANCES } from '../config.js';
 const PANEL_W = 760;
 const PANEL_H = 560;
 const ICON_SIZE = 128;
+const SCROLLBAR_MIN_HANDLE_H = 44;
 
 const STANCE_SECTIONS = {
   ruin: { label: 'BREAKER', color: '#fb923c' },
@@ -45,6 +47,32 @@ export default class UpgradePanel extends ModalPanel {
     this._currentTab = 'stats';
     this._tabStatsBtn = null;
     this._tabSkillsBtn = null;
+    this._tabStatsText = null;
+    this._tabSkillsText = null;
+    this._skillsPulseTween = null;
+    this._skillsBtnBaseScaleX = this._toggleBtn?.scaleX ?? 1;
+    this._skillsBtnBaseScaleY = this._toggleBtn?.scaleY ?? 1;
+    // _createStaticContent() is invoked inside super(...), so preserve refs if already created there.
+    this._contentContainer ??= null;
+    this._viewportRect ??= null;
+    this._viewportMaskGfx ??= null;
+    this._scrollTrack ??= null;
+    this._scrollHandle ??= null;
+    this._scrollY ??= 0;
+    this._maxScroll ??= 0;
+    this._contentTopY ??= 0;
+    this._contentBottomY ??= 0;
+    this._wheelHandler ??= null;
+    this._dragHandler ??= null;
+
+    // Pulse SKILLS toggle when unspent SP is available.
+    this._unsubs.push(on(EVENTS.STATE_CHANGED, ({ changedKeys } = {}) => {
+      if (!Array.isArray(changedKeys) || changedKeys.includes('all') || changedKeys.includes('skillPoints')) {
+        this._syncSkillsButtonPulse();
+      }
+    }));
+    this._unsubs.push(on(EVENTS.SAVE_LOADED, () => this._syncSkillsButtonPulse()));
+    this._syncSkillsButtonPulse();
   }
 
   _getTitle() { return 'SKILLS'; }
@@ -62,66 +90,136 @@ export default class UpgradePanel extends ModalPanel {
   }
 
   _createStaticContent() {
-    const tabY = this._cy - PANEL_H / 2 + 50;
-    this._tabStatsBtn = makeButton(this.scene, this._cx - 62, tabY, 'PASSIVE', {
-      onDown: () => this._setTab('stats'),
-      fontSize: '12px',
-      padding: { x: 10, y: 5 },
+    if (this._title) {
+      this._title.setY(this._title.y - 7);
+    }
+    const viewportX = this._cx - PANEL_W / 2 + 10;
+    const viewportY = this._cy - PANEL_H / 2 + 84;
+    const viewportW = PANEL_W - 32;
+    const viewportH = PANEL_H - 106;
+    this._viewportRect = new Phaser.Geom.Rectangle(viewportX, viewportY, viewportW, viewportH);
+
+    this._contentContainer = this.scene.add.container(0, 0);
+    this._modalObjects.push(this._contentContainer);
+
+    this._viewportMaskGfx = this.scene.add.graphics();
+    this._viewportMaskGfx.fillStyle(0xffffff, 1);
+    this._viewportMaskGfx.fillRect(viewportX, viewportY, viewportW, viewportH);
+    this._viewportMaskGfx.setVisible(false);
+    this._contentContainer.setMask(this._viewportMaskGfx.createGeometryMask());
+
+    const trackX = this._cx + PANEL_W / 2 - 12;
+    this._scrollTrack = this.scene.add.rectangle(trackX, viewportY + viewportH / 2, 6, viewportH, 0x222222)
+      .setStrokeStyle(1, 0x4b5563)
+      .setInteractive({ useHandCursor: true });
+    this._scrollHandle = this.scene.add.rectangle(trackX, viewportY + SCROLLBAR_MIN_HANDLE_H / 2, 10, SCROLLBAR_MIN_HANDLE_H, 0x2563eb)
+      .setStrokeStyle(1, 0x93c5fd)
+      .setInteractive({ draggable: true, useHandCursor: true });
+    this.scene.input.setDraggable(this._scrollHandle);
+
+    this._scrollTrack.on('pointerdown', (pointer) => {
+      if (!this._isOpen) return;
+      this._setScrollFromPointer(pointer.y);
     });
-    this._tabSkillsBtn = makeButton(this.scene, this._cx + 24, tabY, 'ACTIVE', {
-      onDown: () => this._setTab('skills'),
-      fontSize: '12px',
-      padding: { x: 10, y: 5 },
-    });
-    this._modalObjects.push(this._tabStatsBtn, this._tabSkillsBtn);
-    this._syncTabStyles();
+
+    this._dragHandler = (_pointer, gameObject, _dragX, dragY) => {
+      if (!this._isOpen) return;
+      if (gameObject !== this._scrollHandle) return;
+      this._setScrollFromPointer(dragY);
+    };
+    this.scene.input.on('drag', this._dragHandler);
+
+    this._wheelHandler = (pointer, _gameObjects, _deltaX, deltaY) => {
+      if (!this._isOpen) return;
+      if (!this._viewportRect || !Phaser.Geom.Rectangle.Contains(this._viewportRect, pointer.x, pointer.y)) return;
+      if (this._maxScroll <= 0) return;
+      this._setScroll(this._scrollY + deltaY);
+    };
+    this.scene.input.on('wheel', this._wheelHandler);
+
+    this._modalObjects.push(this._scrollTrack, this._scrollHandle);
+    this._syncScrollUi();
+    // Tab controls are created in _buildContent() so their visual state is rebuilt deterministically.
   }
 
   _setTab(nextTab) {
     if (this._currentTab === nextTab) return;
     this._currentTab = nextTab;
-    this._syncTabStyles();
+    this._setScroll(0);
     this._refresh();
   }
 
-  _syncTabStyles() {
-    if (!this._tabStatsBtn || !this._tabSkillsBtn) return;
+  _buildTabControls() {
+    const tabY = this._cy - PANEL_H / 2 + 64;
+    const tabW = 104;
+    const tabH = 28;
+    const statsCx = this._cx - 58;
+    const skillsCx = this._cx + 58;
     const statsActive = this._currentTab === 'stats';
-    this._tabStatsBtn.setStyle({
+
+    const statsBg = this.scene.add.rectangle(statsCx, tabY, tabW, tabH, statsActive ? 0x2563eb : 0x222222)
+      .setStrokeStyle(1, 0x4b5563)
+      .setInteractive({ useHandCursor: true });
+    const skillsBg = this.scene.add.rectangle(skillsCx, tabY, tabW, tabH, statsActive ? 0x222222 : 0x2563eb)
+      .setStrokeStyle(1, 0x4b5563)
+      .setInteractive({ useHandCursor: true });
+
+    const statsText = this.scene.add.text(statsCx, tabY, 'PASSIVE', {
+      fontFamily: 'monospace',
+      fontSize: '14px',
       color: statsActive ? '#ffffff' : '#9ca3af',
-      backgroundColor: statsActive ? '#2563eb' : '#222222',
-    });
-    this._tabSkillsBtn.setStyle({
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    const skillsText = this.scene.add.text(skillsCx, tabY, 'ACTIVE', {
+      fontFamily: 'monospace',
+      fontSize: '14px',
       color: statsActive ? '#9ca3af' : '#ffffff',
-      backgroundColor: statsActive ? '#222222' : '#2563eb',
-    });
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+    const onStats = () => this._setTab('stats');
+    const onSkills = () => this._setTab('skills');
+    statsBg.on('pointerdown', onStats);
+    statsText.on('pointerdown', onStats);
+    skillsBg.on('pointerdown', onSkills);
+    skillsText.on('pointerdown', onSkills);
+
+    this._dynamicObjects.push(statsBg, skillsBg, statsText, skillsText);
+    this._tabStatsBtn = statsBg;
+    this._tabSkillsBtn = skillsBg;
+    this._tabStatsText = statsText;
+    this._tabSkillsText = skillsText;
   }
 
   _buildContent() {
-    this._syncTabStyles();
+    const previousScroll = this._scrollY;
+    this._buildTabControls();
     const state = Store.getState();
     const pointsText = this.scene.add.text(this._cx, this._cy - PANEL_H / 2 + 24, `Skill Points: ${state.skillPoints || 0}`, {
-      fontFamily: 'monospace', fontSize: '13px', color: '#22c55e', fontStyle: 'bold',
+      fontFamily: 'monospace', fontSize: '15px', color: '#22c55e', fontStyle: 'bold',
     }).setOrigin(0.5, 0);
     this._dynamicObjects.push(pointsText);
 
+    const scrollStartIdx = this._dynamicObjects.length;
+    let contentBottom = this._cy - PANEL_H / 2 + 84;
     if (this._currentTab === 'stats') {
-      this._buildStatsTab(state);
+      contentBottom = this._buildStatsTab(state);
     } else {
-      this._buildSkillsTab();
+      contentBottom = this._buildSkillsTab();
     }
+
+    this._mountScrollableObjects(scrollStartIdx);
+    this._contentTopY = this._cy - PANEL_H / 2 + 84;
+    this._contentBottomY = contentBottom;
+    this._recomputeScrollBounds();
+    this._setScroll(previousScroll);
   }
 
   _buildStatsTab(state) {
-    const sep = this.scene.add.rectangle(this._cx, this._cy + 10, 1, PANEL_H - 110, 0x444444);
-    this._dynamicObjects.push(sep);
-
     const leftX = this._cx - PANEL_W / 2 + 20;
     const rightX = this._cx + 20;
     const topY = this._cy - PANEL_H / 2 + 84;
 
     const legitHeader = this.scene.add.text(leftX, topY - 20, '-- Standard --', {
-      fontFamily: 'monospace', fontSize: '13px', color: '#818cf8',
+      fontFamily: 'monospace', fontSize: '15px', color: '#818cf8',
     });
     this._dynamicObjects.push(legitHeader);
 
@@ -129,15 +227,18 @@ export default class UpgradePanel extends ModalPanel {
     const legit = allStat.filter((u) => u.category === 'legit');
     const exploit = allStat.filter((u) => u.category === 'exploit');
 
-    this._renderUpgradeColumn(legit, leftX, topY);
+    const leftBottom = this._renderUpgradeColumn(legit, leftX, topY);
+    let rightBottom = topY;
 
     if (state.flags.crackTriggered) {
       const exploitHeader = this.scene.add.text(rightX, topY - 20, '-- Exploits --', {
-        fontFamily: 'monospace', fontSize: '13px', color: '#ef4444',
+        fontFamily: 'monospace', fontSize: '15px', color: '#ef4444',
       });
       this._dynamicObjects.push(exploitHeader);
-      this._renderUpgradeColumn(exploit, rightX, topY);
+      rightBottom = this._renderUpgradeColumn(exploit, rightX, topY);
     }
+
+    return Math.max(leftBottom, rightBottom);
   }
 
   _buildSkillsTab() {
@@ -147,9 +248,10 @@ export default class UpgradePanel extends ModalPanel {
 
     let leftY = this._renderSkillSection('ruin', leftX, startY);
     leftY += 14;
-    this._renderSkillSection('fortress', leftX, leftY);
+    const leftBottom = this._renderSkillSection('fortress', leftX, leftY);
 
-    this._renderSkillSection('tempest', rightX, startY);
+    const rightBottom = this._renderSkillSection('tempest', rightX, startY);
+    return Math.max(leftBottom, rightBottom);
   }
 
   _renderUpgradeColumn(upgrades, startX, startY) {
@@ -163,21 +265,21 @@ export default class UpgradePanel extends ModalPanel {
 
       const levelStr = isMaxed ? 'MAX' : `Lv.${level}/${upgrade.maxLevel}`;
       const nameText = this.scene.add.text(startX, y, `${upgrade.name} [${levelStr}]`, {
-        fontFamily: 'monospace', fontSize: '12px',
+        fontFamily: 'monospace', fontSize: '14px',
         color: upgrade.category === 'exploit' ? '#ef4444' : '#ffffff',
       });
       this._dynamicObjects.push(nameText);
 
-      const descText = this.scene.add.text(startX, y + 16, upgrade.description, {
-        fontFamily: 'monospace', fontSize: '10px', color: '#888888',
+      const descText = this.scene.add.text(startX, y + 18, upgrade.description, {
+        fontFamily: 'monospace', fontSize: '12px', color: '#888888',
       });
       this._dynamicObjects.push(descText);
 
       const insight = this._getPassiveUpgradeInsight(upgrade.id);
       if (insight) {
-        const insightText = this.scene.add.text(startX, y + 30, insight, {
+        const insightText = this.scene.add.text(startX, y + 36, insight, {
           fontFamily: 'monospace',
-          fontSize: '9px',
+          fontSize: '11px',
           color: '#93c5fd',
         });
         this._dynamicObjects.push(insightText);
@@ -199,13 +301,15 @@ export default class UpgradePanel extends ModalPanel {
         this._dynamicObjects.push(buyBtn);
       } else {
         const maxLabel = this.scene.add.text(startX + 262, y + 4, 'MAXED', {
-          fontFamily: 'monospace', fontSize: '11px', color: '#555555',
+          fontFamily: 'monospace', fontSize: '13px', color: '#555555',
         });
         this._dynamicObjects.push(maxLabel);
       }
 
-      y += insight ? 64 : 50;
+      y += insight ? 72 : 56;
     }
+
+    return y;
   }
 
   _getPassiveUpgradeInsight(upgradeId) {
@@ -282,11 +386,11 @@ export default class UpgradePanel extends ModalPanel {
   _renderSkillSection(stanceId, startX, startY) {
     const meta = STANCE_SECTIONS[stanceId];
     const sectionHeader = this.scene.add.text(startX, startY, `-- ${meta.label} --`, {
-      fontFamily: 'monospace', fontSize: '13px', color: meta.color,
+      fontFamily: 'monospace', fontSize: '15px', color: meta.color,
     });
     this._dynamicObjects.push(sectionHeader);
 
-    let y = startY + 22;
+    let y = startY + 26;
     const upgrades = getSkillUpgradesByStance(stanceId).filter((u) => UpgradeManager.isVisible(u.id));
 
     for (const upgrade of upgrades) {
@@ -298,24 +402,24 @@ export default class UpgradePanel extends ModalPanel {
 
       const nameColor = isOwned ? '#22c55e' : reqMet ? '#ffffff' : '#6b7280';
       const nameText = this.scene.add.text(startX, y, `[${tier}] ${upgrade.name}`, {
-        fontFamily: 'monospace', fontSize: '12px', color: nameColor,
+        fontFamily: 'monospace', fontSize: '14px', color: nameColor,
       });
       this._dynamicObjects.push(nameText);
 
-      const descText = this.scene.add.text(startX, y + 14, upgrade.description, {
-        fontFamily: 'monospace', fontSize: '9px', color: '#888888',
+      const descText = this.scene.add.text(startX, y + 18, upgrade.description, {
+        fontFamily: 'monospace', fontSize: '11px', color: '#888888',
       });
       this._dynamicObjects.push(descText);
 
       if (isOwned) {
         const ownedLabel = this.scene.add.text(startX + 268, y + 2, 'OWNED', {
-          fontFamily: 'monospace', fontSize: '10px', color: '#22c55e',
+          fontFamily: 'monospace', fontSize: '12px', color: '#22c55e',
         });
         this._dynamicObjects.push(ownedLabel);
       } else if (!reqMet) {
         const reqName = getUpgrade(upgrade.requires)?.name || upgrade.requires;
         const reqLabel = this.scene.add.text(startX + 188, y + 2, `Requires: ${reqName}`, {
-          fontFamily: 'monospace', fontSize: '9px', color: '#6b7280',
+          fontFamily: 'monospace', fontSize: '11px', color: '#6b7280',
         });
         this._dynamicObjects.push(reqLabel);
       } else {
@@ -323,14 +427,14 @@ export default class UpgradePanel extends ModalPanel {
           color: canBuy ? '#22c55e' : '#555555',
           bg: canBuy ? '#333333' : '#222222',
           hoverBg: '#555555',
-          fontSize: '10px',
+          fontSize: '12px',
           padding: { x: 5, y: 2 },
           onDown: () => this._tryPurchase(upgrade.id),
         });
         this._dynamicObjects.push(buyBtn);
       }
 
-      y += 36;
+      y += 44;
     }
 
     return y;
@@ -352,5 +456,111 @@ export default class UpgradePanel extends ModalPanel {
     this._lastFailedPurchaseTime = now;
     const line = FAILED_PURCHASE[Math.floor(Math.random() * FAILED_PURCHASE.length)];
     emit(EVENTS.DIALOGUE_QUEUED, { text: line, emotion: 'sarcastic', context: 'Insufficient funds' });
+  }
+
+  _syncSkillsButtonPulse() {
+    if (!this._toggleBtn) return;
+    const shouldPulse = (Store.getState().skillPoints || 0) > 0;
+    if (shouldPulse) {
+      if (this._skillsPulseTween) return;
+      this._toggleBtn.setScale(this._skillsBtnBaseScaleX, this._skillsBtnBaseScaleY);
+      this._skillsPulseTween = this.scene.tweens.add({
+        targets: this._toggleBtn,
+        scaleX: this._skillsBtnBaseScaleX * 1.10,
+        scaleY: this._skillsBtnBaseScaleY * 1.10,
+        duration: 650,
+        ease: 'Sine.easeInOut',
+        yoyo: true,
+        repeat: -1,
+      });
+      return;
+    }
+    this._stopSkillsButtonPulse();
+  }
+
+  _stopSkillsButtonPulse() {
+    if (this._skillsPulseTween) {
+      this._skillsPulseTween.stop();
+      this._skillsPulseTween = null;
+    }
+    if (this._toggleBtn) {
+      this.scene.tweens.killTweensOf(this._toggleBtn);
+      this._toggleBtn.setScale(this._skillsBtnBaseScaleX, this._skillsBtnBaseScaleY);
+    }
+  }
+
+  _mountScrollableObjects(startIdx) {
+    if (!this._contentContainer) return;
+    for (let i = startIdx; i < this._dynamicObjects.length; i++) {
+      const obj = this._dynamicObjects[i];
+      if (!obj || obj.parentContainer === this._contentContainer) continue;
+      this._contentContainer.add(obj);
+    }
+  }
+
+  _recomputeScrollBounds() {
+    if (!this._viewportRect) return;
+    const contentHeight = Math.max(0, this._contentBottomY - this._contentTopY);
+    this._maxScroll = Math.max(0, contentHeight - this._viewportRect.height);
+    this._syncScrollUi();
+  }
+
+  _setScroll(nextScroll) {
+    const clamped = Phaser.Math.Clamp(nextScroll || 0, 0, this._maxScroll);
+    this._scrollY = clamped;
+    if (this._contentContainer) {
+      this._contentContainer.y = -clamped;
+    }
+    this._syncScrollUi();
+  }
+
+  _setScrollFromPointer(pointerY) {
+    if (!this._viewportRect || !this._scrollHandle || this._maxScroll <= 0) return;
+    const trackTop = this._viewportRect.y;
+    const trackBottom = this._viewportRect.y + this._viewportRect.height;
+    const handleH = this._scrollHandle.displayHeight;
+    const minCenter = trackTop + handleH / 2;
+    const maxCenter = trackBottom - handleH / 2;
+    const centerY = Phaser.Math.Clamp(pointerY, minCenter, maxCenter);
+    const usable = Math.max(1, this._viewportRect.height - handleH);
+    const ratio = Phaser.Math.Clamp((centerY - minCenter) / usable, 0, 1);
+    this._setScroll(ratio * this._maxScroll);
+  }
+
+  _syncScrollUi() {
+    if (!this._viewportRect || !this._scrollTrack || !this._scrollHandle) return;
+    const hasOverflow = this._maxScroll > 0;
+    this._scrollTrack.setVisible(hasOverflow);
+    this._scrollHandle.setVisible(hasOverflow);
+    if (!hasOverflow) return;
+
+    const contentHeight = Math.max(1, this._contentBottomY - this._contentTopY);
+    const ratioVisible = Phaser.Math.Clamp(this._viewportRect.height / contentHeight, 0, 1);
+    const handleH = Math.max(SCROLLBAR_MIN_HANDLE_H, Math.round(this._viewportRect.height * ratioVisible));
+    this._scrollHandle.setSize(10, handleH);
+    this._scrollHandle.setDisplaySize(10, handleH);
+
+    const trackTop = this._viewportRect.y;
+    const minCenter = trackTop + handleH / 2;
+    const usable = Math.max(1, this._viewportRect.height - handleH);
+    const ratio = this._maxScroll > 0 ? this._scrollY / this._maxScroll : 0;
+    this._scrollHandle.y = minCenter + usable * ratio;
+  }
+
+  destroy() {
+    this._stopSkillsButtonPulse();
+    if (this._wheelHandler) {
+      this.scene.input.off('wheel', this._wheelHandler);
+      this._wheelHandler = null;
+    }
+    if (this._dragHandler) {
+      this.scene.input.off('drag', this._dragHandler);
+      this._dragHandler = null;
+    }
+    if (this._viewportMaskGfx) {
+      this._viewportMaskGfx.destroy();
+      this._viewportMaskGfx = null;
+    }
+    super.destroy();
   }
 }

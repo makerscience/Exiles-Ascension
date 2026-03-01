@@ -88,6 +88,8 @@ export const EVENTS = {
   DIALOGUE_QUEUED:      'dialogue:queued',
   DIALOGUE_DISPLAYED:   'dialogue:displayed',
   UI_ONBOARDING_REQUESTED: 'ui:onboardingRequested',
+  UI_ONBOARDING_DISMISSED: 'ui:onboardingDismissed',
+  UI_HIGHLIGHT_GOLD:    'ui:highlightGold',
   SKILL_UNLOCKED:       'skill:unlocked',
   UI_TOAST:             'ui:toast',
 };

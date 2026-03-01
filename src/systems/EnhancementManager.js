@@ -48,7 +48,6 @@ const EnhancementManager = {
     const state = Store.getState();
     const level = this.getLevel(slotId);
     if (level >= MAX_LEVEL) return false;
-    if (!state.equipped?.[slotId]) return false;
 
     const cost = this.getCost(slotId);
     return state.gold.gte(cost);

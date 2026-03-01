@@ -10,6 +10,34 @@ Format:
 
 ---
 
+## 2026-03-01
+- Tags: ui, onboarding, progression
+- Decision: Enhancement tutorial is one-time per save and driven by explicit staged flags (`enhanceTutorialStage`, `enhanceTutorialCompleted`) with popup-dismiss sequencing.
+- Rationale: The flow needs deterministic progression across multiple UI surfaces (popup -> top bar highlight -> inventory button -> slot -> enhance button) and must survive refreshes/reopens.
+- Alternatives considered: Pure transient UI state in InventoryPanel (rejected: fragile and easy to lose), single boolean flag only (rejected: insufficient for multi-step guidance).
+- Consequences / Follow-ups: Tutorial stage now arms on first popup dismiss to avoid missed second-dismiss race conditions.
+
+## 2026-03-01
+- Tags: economy, ui, architecture
+- Decision: Slot enhancement can be purchased on empty enhanceable equipment slots; selection/highlight/detail flow supports empty slots.
+- Rationale: Player teaching flow requires clicking an empty main-hand slot and still being able to enhance it. This also makes slot investment behavior consistent regardless of current gear.
+- Alternatives considered: Keep enhancement gated to equipped items (rejected: blocks tutorial and forces unnecessary equip friction).
+- Consequences / Follow-ups: Tooltip/detail copy now explains empty-slot enhancement value, and InventoryPanel selection behavior was broadened.
+
+## 2026-03-01
+- Tags: failure-mode, ui, scenes
+- Decision: Quit-to-main-menu transition from SettingsPanel uses ScenePlugin sequence (close modal, resume if paused, stop gameplay scenes, start StartScene) with a short fallback reload.
+- Rationale: Direct SceneManager operations during input callbacks caused freezes in some states. ScenePlugin calls are safer for in-scene transitions.
+- Alternatives considered: Keep direct manager stop/start calls (rejected: freeze-prone), full app reload always (rejected: heavier UX).
+- Consequences / Follow-ups: If scene activation ever fails, fallback reload recovers instead of hanging.
+
+## 2026-03-01
+- Tags: startup, performance, ux
+- Decision: Removed BootScene debug splash (`Phase 0 Complete`) and forced 1s delayed transition; BootScene now starts StartScene immediately after preload.
+- Rationale: Startup felt slow and the debug flash looked like unintended noise.
+- Alternatives considered: Keep splash with shorter delay (rejected: still unnecessary), keep runtime downscale + hide text only (rejected: still adds startup latency).
+- Consequences / Follow-ups: Next optimization opportunity is true lazy asset loading by phase/area.
+
 ## 2026-02-27
 - Tags: ui, onboarding
 - Decision: First-run onboarding is now a hard modal that only closes via an explicit `CONTINUE` button; backdrop clicks and Enter key are non-dismiss actions.

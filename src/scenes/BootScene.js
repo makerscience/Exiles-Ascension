@@ -1,5 +1,4 @@
 import Phaser from 'phaser';
-import { WORLD } from '../config.js';
 
 export default class BootScene extends Phaser.Scene {
   constructor() {
@@ -123,6 +122,7 @@ export default class BootScene extends Phaser.Scene {
     this.load.image('roadbandit001_attack',   'Images/Enemies/area1/roadbandit001_attack.png');
     this.load.image('roadbandit001_dead',     'Images/Enemies/area1/roadbandit001_dead.png');
     this.load.image('crackedarmor001',       'Images/effects/crackedarmor001.png');
+    this.load.image('bulwarkvisual',         'Images/Effects/bulwarkvisual.png');
 
     // Start screen backgrounds
     this.load.image('start_sky',    'Images/Backgrounds/Start screen/background002_rear.png');
@@ -215,44 +215,10 @@ export default class BootScene extends Phaser.Scene {
   }
 
   create() {
-    console.log(`[BootScene] create — canvas ${WORLD.width}x${WORLD.height}`);
-
-    // Pre-downscale large combat sprites via canvas (high-quality Lanczos)
-    // so WebGL only needs ≤2× bilinear at runtime.
-    this._downscaleCombatSprites();
-
-    const cx = WORLD.width / 2;
-    const cy = WORLD.height / 2;
-
-    // Green rectangle — proof of life
-    const rect = this.add.rectangle(cx, cy, 400, 300, 0x22c55e);
-
-    // Label
-    this.add.text(cx, cy, 'Phase 0 Complete', {
-      fontFamily: 'monospace',
-      fontSize: '28px',
-      color: '#ffffff',
-    }).setOrigin(0.5);
-
-    // Gentle pulse tween to show the update loop is running
-    this.tweens.add({
-      targets: rect,
-      scaleX: 1.05,
-      scaleY: 1.05,
-      duration: 800,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut',
-    });
-
-    console.log('[BootScene] lifecycle complete — rectangle rendered');
-
-    // Transition to StartScene after brief display
-    this.time.delayedCall(1000, () => {
-      this.scene.start('StartScene');
-    });
+    // Go straight to main menu once preload is done.
+    // Skip boot splash and heavy pre-menu texture processing.
+    this.scene.start('StartScene');
   }
-
   /**
    * Replace oversized combat sprite textures with canvas-downscaled versions.
    * Target = 2× display size so WebGL bilinear handles the final 2× cleanly.
@@ -311,9 +277,6 @@ export default class BootScene extends Phaser.Scene {
       { keys: ['insectswarm001_default1', 'insectswarm001_default2', 'insectswarm001_reaction', 'insectswarm001_attack', 'insectswarm001_dead'], w: 360, h: 360 },
       { keys: ['goblinwarrior001_default', 'goblinwarrior001_reaction', 'goblinwarrior001_attack', 'goblinwarrior001_dead'], w: 320, h: 384 },
       { keys: ['crackedarmor001'], w: 512, h: 512 },
-      { keys: ['icon_tempest', 'icon_ruin', 'icon_fortress'], w: 128, h: 128 },
-      { keys: ['icon_flurry_button', 'icon_smash_button', 'icon_bulwark_button', 'icon_drink_button'], w: 128, h: 128 },
-      { keys: ['icon_inventory_button', 'icon_skills_button', 'icon_stats_button', 'icon_settings_button'], w: 128, h: 128 },
     ];
     for (const { keys, w, h } of enemyGroups) {
       for (const key of keys) {
@@ -359,3 +322,4 @@ export default class BootScene extends Phaser.Scene {
     this.textures.addCanvas(key, canvas);
   }
 }
+

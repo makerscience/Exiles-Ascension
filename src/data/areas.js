@@ -67,7 +67,8 @@ export function getZoneScaling(zoneNum, stat) {
  *   7: { hp: 1.25, atk: 1.1 },  // zone 7 spike — tankier and harder
  */
 export const ZONE_BALANCE = {
-  2: { hp: 0.7, atk: 0.7, def: 0.85, gold: 1.5, xp: 1.5 },
+  2: { hp: 1.2, atk: 1.2, def: 1.2 },
+  3: { hp: 1.2, atk: 1.2, def: 1.2 },
 };
 
 /** Returns the bias multiplier for a given global zone + stat. Defaults to 1.0. */

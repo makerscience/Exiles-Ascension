@@ -337,3 +337,10 @@ This is the strongest argument for doing architectural cleanup early: **you can'
 
 ### From Balance GUI (Player Tab)
 49. **`var` in `for` loops creates silent closure bugs in UI builders.** `buildZones()` used `for(var z=...)` with closures in `mkCell` callbacks. After the loop, all slider getters/setters referenced `z=31` (post-loop value). Initial display was correct (sync evaluation), but runtime slider interaction silently wrote to `balance[31]` — never saved because `cleanZones()` only iterates 1-30. The `dblclick`/`contextmenu` handlers in the same loop used IIFEs correctly, masking the inconsistency. Fix: wrap closures in an IIFE `(function(zz){...})(z)`. Pattern: any `for(var` loop with async callbacks needs IIFE capture or conversion to `.forEach()`.
+
+### From Onboarding + Scene Flow Fixes
+50. **Multi-step tutorials need persisted stage state, not only transient UI state.** The enhancement tutorial crossed popup, top-bar, and inventory systems. A single "shown" boolean was not enough to drive progression reliably. Explicit staged flags (`button`, `slot`, `enhance`, `done`) made the flow resumable and deterministic when panels reopened or refresh events fired.
+51. **When chaining popups, arm downstream state at the earliest reliable dismiss point.** The inventory pulse occasionally failed because it depended on a follow-up popup dismiss event. Setting tutorial stage on first popup dismiss made the guidance robust even if secondary dismiss events were delayed or missed.
+52. **Scene transitions triggered inside UI callbacks should prefer ScenePlugin flow and a fallback.** Direct SceneManager stop/start calls from Settings interactions caused freeze states. Closing the modal first, using ScenePlugin scene operations, and adding a short fallback reload prevents soft-locks during quit-to-main-menu.
+53. **Boot-time debug visuals and synchronous preprocessing are expensive UX debt.** A forced splash delay plus runtime texture downscale created slow startup and noisy "Phase 0 Complete" flashes. Starting the menu immediately after preload improved perceived performance more than any micro-optimization in gameplay code.
+

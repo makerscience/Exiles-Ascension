@@ -30,7 +30,8 @@ export default class BossChallenge {
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
     this._btn.setVisible(false);
-    this._btn.setDepth(10);
+    // Keep boss CTA behind modal panels (inventory/skills/settings/stats).
+    this._btn.setDepth(0);
 
     this._btn.on('pointerdown', () => this._onChallenge());
     this._btn.on('pointerover', () => {
