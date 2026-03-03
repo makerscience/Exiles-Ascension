@@ -19,3 +19,6 @@ Desktop.ini
 # Environment
 .env
 .env.local
+
+# MCP config (contains API keys)
+.mcp.json
