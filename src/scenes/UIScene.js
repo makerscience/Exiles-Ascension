@@ -390,15 +390,28 @@ export default class UIScene extends Phaser.Scene {
   _returnToMainMenuFromDemoEnd() {
     SaveManager.save();
     const scenePlugin = this.scene;
-    if (!scenePlugin?.manager) return;
-    if (scenePlugin.isPaused('GameScene')) {
-      scenePlugin.resume('GameScene');
-    }
-    scenePlugin.stop('OverworldScene');
-    scenePlugin.stop('SpritePreviewScene');
-    scenePlugin.stop('UIScene');
-    scenePlugin.stop('GameScene');
-    scenePlugin.start('StartScene');
+    const manager = scenePlugin?.manager;
+    if (!scenePlugin || !manager) return;
+
+    // Tear down overlay interaction first, then transition on the next tick so
+    // we are not stopping the owning scene mid-pointer callback.
+    this._destroyDemoEndScreen();
+    this.time.delayedCall(0, () => {
+      if (scenePlugin.isPaused('GameScene')) {
+        scenePlugin.resume('GameScene');
+      }
+      scenePlugin.stop('OverworldScene');
+      scenePlugin.stop('SpritePreviewScene');
+      scenePlugin.stop('UIScene');
+      scenePlugin.stop('GameScene');
+      scenePlugin.start('StartScene');
+    });
+
+    setTimeout(() => {
+      if (!manager.isActive('StartScene')) {
+        window.location.reload();
+      }
+    }, 120);
   }
 }
 
