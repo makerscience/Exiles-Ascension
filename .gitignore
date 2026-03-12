@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 dist/
+preview.log
+preview.err.log
 
 # OS files
 .DS_Store

@@ -1,14 +1,44 @@
 import { on, EVENTS } from '../events.js';
 import Store from './Store.js';
 
-const TRACK_URL = 'Sound/soundtrack/ambient progression.mp3';
+const TRACK_URLS = [
+  'Sound/soundtrack/track1.mp3',
+  'Sound/soundtrack/track2.mp3',
+  'Sound/soundtrack/track3.mp3',
+  'Sound/soundtrack/track4.mp3',
+];
 
 let bgm = null;
 let settingsUnsub = null;
 let resumeBound = null;
+let endedBound = null;
+let currentTrackIndex = 0;
 
 function getVolumeFromStore() {
   return Store.getState()?.settings?.musicVolume ?? 0.5;
+}
+
+function setTrack(index) {
+  if (!bgm) return;
+  currentTrackIndex = ((index % TRACK_URLS.length) + TRACK_URLS.length) % TRACK_URLS.length;
+  bgm.src = TRACK_URLS[currentTrackIndex];
+  bgm.load();
+}
+
+function playCurrentTrack() {
+  if (!bgm) return Promise.resolve();
+  return bgm.play()
+    .then(() => removeResumeHandler())
+    .catch((error) => {
+      addResumeHandler();
+      throw error;
+    });
+}
+
+function playNextTrack() {
+  if (!bgm) return Promise.resolve();
+  setTrack(currentTrackIndex + 1);
+  return playCurrentTrack();
 }
 
 function removeResumeHandler() {
@@ -25,9 +55,7 @@ function addResumeHandler() {
       removeResumeHandler();
       return;
     }
-    bgm.play()
-      .then(() => removeResumeHandler())
-      .catch(() => {});
+    playCurrentTrack().catch(() => {});
   };
   document.addEventListener('pointerdown', resumeBound);
   document.addEventListener('keydown', resumeBound);
@@ -44,13 +72,16 @@ const MusicManager = {
 
   ensurePlaying() {
     if (!bgm) {
-      bgm = new Audio(TRACK_URL);
-      bgm.loop = true;
+      bgm = new Audio();
+      bgm.loop = false;
+      endedBound = () => {
+        playNextTrack().catch(() => {});
+      };
+      bgm.addEventListener('ended', endedBound);
+      setTrack(currentTrackIndex);
     }
     this.syncVolumeFromStore();
-    bgm.play()
-      .then(() => removeResumeHandler())
-      .catch(() => addResumeHandler());
+    playCurrentTrack().catch(() => {});
     return bgm;
   },
 
@@ -70,10 +101,15 @@ const MusicManager = {
       settingsUnsub = null;
     }
     if (bgm) {
+      if (endedBound) {
+        bgm.removeEventListener('ended', endedBound);
+        endedBound = null;
+      }
       bgm.pause();
       bgm.src = '';
       bgm = null;
     }
+    currentTrackIndex = 0;
   },
 };
 
